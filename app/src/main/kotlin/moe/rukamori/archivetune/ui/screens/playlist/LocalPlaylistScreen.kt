@@ -474,6 +474,41 @@ fun LocalPlaylistScreen(
         )
     }
 
+    var showShuffleOrderDialog by remember { mutableStateOf(false) }
+    if (showShuffleOrderDialog) {
+        DefaultDialog(
+            onDismiss = { showShuffleOrderDialog = false },
+            content = {
+                Text(
+                    text =
+                        stringResource(
+                            R.string.shuffle_playlist_order_confirm,
+                            playlist?.playlist?.name.orEmpty(),
+                        ),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(horizontal = 18.dp),
+                )
+            },
+            buttons = {
+                TextButton(
+                    onClick = { showShuffleOrderDialog = false },
+                    shapes = ButtonDefaults.shapes(),
+                ) {
+                    Text(text = stringResource(android.R.string.cancel))
+                }
+                TextButton(
+                    onClick = {
+                        showShuffleOrderDialog = false
+                        viewModel.shufflePlaylistOrder()
+                    },
+                    shapes = ButtonDefaults.shapes(),
+                ) {
+                    Text(text = stringResource(android.R.string.ok))
+                }
+            },
+        )
+    }
+
     val headerItems by remember {
         derivedStateOf {
             val current = playlist
@@ -791,6 +826,15 @@ fun LocalPlaylistScreen(
                                                     )
                                                 }
                                             },
+                                        )
+                                    }
+
+                                    if (editable && playlist.playlist.browseId == null && songs.size > 1) {
+                                        MediaDetailIconAction(
+                                            icon = R.drawable.shuffle,
+                                            contentDescription = R.string.shuffle_playlist_order,
+                                            contentColor = contentColor,
+                                            onClick = { showShuffleOrderDialog = true },
                                         )
                                     }
 

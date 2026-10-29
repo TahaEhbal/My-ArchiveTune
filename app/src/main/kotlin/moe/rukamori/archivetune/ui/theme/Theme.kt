@@ -32,6 +32,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.SaverScope
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -480,9 +481,21 @@ fun extractWallpaperThemeColor(context: Context): Color? {
 
 fun ColorScheme.pureBlack(apply: Boolean) =
     if (apply) {
+        // Pure black surfaces, with accent colors pushed toward white so buttons stay visible.
+        val brightPrimary = lerp(primary, Color.White, 0.65f)
+        val brightSecondary = lerp(secondary, Color.White, 0.55f)
         copy(
             surface = Color.Black,
             background = Color.Black,
+            primary = brightPrimary,
+            onPrimary = Color.Black,
+            secondary = brightSecondary,
+            onSecondary = Color.Black,
+            primaryContainer = brightPrimary,
+            onPrimaryContainer = Color.Black,
+            secondaryContainer = lerp(secondary, Color.White, 0.35f),
+            onSecondaryContainer = Color.Black,
+            outline = lerp(outline, Color.White, 0.4f),
         )
     } else {
         this

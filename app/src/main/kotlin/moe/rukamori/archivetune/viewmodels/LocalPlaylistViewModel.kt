@@ -154,6 +154,25 @@ class LocalPlaylistViewModel
             }
         }
 
+        fun shufflePlaylistOrder() {
+            viewModelScope.launch(Dispatchers.IO) {
+                database.withTransaction {
+                    getPlaylistSongs(playlistId)
+                        .shuffled()
+                        .forEachIndexed { index, playlistSong ->
+                            update(playlistSong.map.copy(position = index))
+                        }
+                }
+                database.withTransaction {
+                    updatePlaylistSortPreference(
+                        playlistId = playlistId,
+                        sortType = PlaylistSongSortType.CUSTOM.name,
+                        descending = sortDescending.value,
+                    )
+                }
+            }
+        }
+
         private val _viewCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
         val viewCounts = _viewCounts.asStateFlow()
 
