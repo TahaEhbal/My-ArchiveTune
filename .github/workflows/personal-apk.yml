@@ -1,6 +1,7 @@
 name: Personal APK
 
-# Builds a single phone-ready APK that needs no secrets or signing keys.
+# Builds a single phone-ready APK that needs no secrets or signing keys, then
+# publishes it as a GitHub Release so the app's built-in updater can find it.
 # It uses the debug variant, so it installs NEXT TO the original ArchiveTune
 # (package moe.rukamori.archivetune.debug) and does not touch its data.
 
@@ -9,6 +10,7 @@ on:
   push:
     branches:
       - 'claude/**'
+      - main
 
 concurrency:
   group: personal-apk-${{ github.ref }}
@@ -18,6 +20,12 @@ jobs:
   build:
     name: Build debug APK (arm64)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    env:
+      VERSION_NAME: 15.1.${{ github.run_number }}
+      VERSION_CODE: ${{ github.run_number }}
 
     steps:
       - uses: actions/checkout@v7
@@ -54,15 +62,26 @@ jobs:
           mkdir -p ~/.android
           cp ci/debug.keystore ~/.android/debug.keystore
 
+      # Version numbers go up with every build so the in-app updater can tell
+      # when a newer build exists. The updater looks at this repository's releases.
       - name: Build debug APK
-        run: ./gradlew assembleGmsMobileArm64Debug
+        run: >
+          ./gradlew assembleGmsMobileArm64Debug
+          -PnightlyVersionName=${VERSION_NAME}
+          -PbuildVersionCode=$((142 + VERSION_CODE))
+        env:
+          RELEASE_GITHUB_OWNER: ${{ github.repository_owner }}
+          RELEASE_GITHUB_REPO: ${{ github.event.repository.name }}
 
       - name: Collect APK
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p out
-          find app/build/outputs/apk -type f -name '*.apk' -exec cp {} out/ \;
+          APK="$(find app/build/outputs/apk -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          # The updater looks for exactly this file name in each release.
+          cp "$APK" out/app-gms-mobile-arm64-release.apk
           ls -l out
 
       - name: Upload APK
@@ -71,3 +90,16 @@ jobs:
           name: ArchiveTune-personal-arm64-debug
           path: out/*.apk
           if-no-files-found: error
+
+      - name: Publish release for the in-app updater
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOTES="$(git log -1 --pretty=%B)"
+          gh release create "v${VERSION_NAME}" out/app-gms-mobile-arm64-release.apk \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "${VERSION_NAME}" \
+            --notes "${NOTES}"

@@ -264,7 +264,7 @@ fun buildSettingsGroups(
         ),
         SettingsGroup(
             title = stringResource(R.string.integration),
-            items = listOf(androidAuto, integration, modules, aiIntegration, internet),
+            items = listOf(androidAuto, modules, internet),
         ),
         SettingsGroup(
             title = stringResource(R.string.storage),

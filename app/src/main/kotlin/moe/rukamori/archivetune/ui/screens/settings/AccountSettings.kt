@@ -407,19 +407,6 @@ fun AccountSettings(
                 }
 
                 item {
-                    ExpressiveSectionCard(title = integrationLabel) {
-                        ExpressiveActionRow(
-                            icon = painterResource(R.drawable.integration),
-                            title = integrationLabel,
-                            subtitle = stringResource(R.string.account_integrations_summary),
-                            onClick = { navController.navigate("settings/integration") },
-                            index = 0,
-                            count = 1,
-                        )
-                    }
-                }
-
-                item {
                     ExpressiveSectionCard(title = miscLabel) {
                         ExpressiveActionRow(
                             icon = painterResource(R.drawable.visibility_off),

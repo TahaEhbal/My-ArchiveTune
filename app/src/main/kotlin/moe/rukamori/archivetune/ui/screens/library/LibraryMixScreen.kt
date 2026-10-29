@@ -388,21 +388,6 @@ fun LibraryMixScreen(
                     }
                 }
 
-                item(key = "top_mixes") {
-                    TopMixesForYouSection(
-                        state = topMixesUiState,
-                        onRefresh = viewModel::refreshTopMixes,
-                        onConfigureAi = { navController.navigate("settings/ai_integration") },
-                        onPlayMix = { mix ->
-                            playerConnection.playQueue(
-                                ListQueue(
-                                    items = mix.tracks.map { it.toMediaItem() },
-                                ),
-                            )
-                        },
-                    )
-                }
-
                 val playlistTagFilterContent = filterContent
                 if (playlistTagFilterContent != null) {
                     item(key = "playlist_tag_filters") {

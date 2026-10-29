@@ -413,30 +413,6 @@ class AboutViewModel
                 primaryLinks =
                     AboutLinkCollection.of(
                         AboutLinkUiModel(
-                            id = "github",
-                            iconResId = R.drawable.github,
-                            labelResId = R.string.about_content_desc_github,
-                            url = "https://github.com/rukamori/ArchiveTune",
-                        ),
-                        AboutLinkUiModel(
-                            id = "website",
-                            iconResId = R.drawable.website,
-                            labelResId = R.string.about_content_desc_website,
-                            url = "https://archivetune.miuka.moe",
-                        ),
-                        AboutLinkUiModel(
-                            id = "telegram",
-                            iconResId = R.drawable.telegram,
-                            labelResId = R.string.about_content_desc_telegram,
-                            url = "https://t.me/ArchiveTuneGC",
-                        ),
-                        AboutLinkUiModel(
-                            id = "discord",
-                            iconResId = R.drawable.discord,
-                            labelResId = R.string.discord,
-                            url = "https://discord.gg/archivetune",
-                        ),
-                        AboutLinkUiModel(
                             id = "privacy_policy",
                             iconResId = R.drawable.lock,
                             labelResId = R.string.privacy,
