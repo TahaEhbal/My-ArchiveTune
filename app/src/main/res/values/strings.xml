@@ -264,6 +264,9 @@
     <string name="edit_playlist">Edit playlist</string>
     <string name="shuffle_playlist_order">Shuffle playlist order</string>
     <string name="shuffle_playlist_order_confirm">Permanently reorder \"%1$s\" into a random order? The current order can\'t be restored.</string>
+    <string name="shuffle_playlist_order_confirm_synced">Permanently reorder \"%1$s\" into a random order? This also changes the playlist on your YouTube Music account, can take a while for long playlists, and can\'t be undone.</string>
+    <string name="shuffle_playlist_order_done">Playlist shuffled</string>
+    <string name="shuffle_playlist_order_failed">Couldn\'t shuffle the whole playlist. Pull to refresh to re-sync it.</string>
     <string name="create_playlist">Create playlist</string>
     <string name="playlist_name">Playlist name</string>
     <string name="artist_name">Artist name</string>

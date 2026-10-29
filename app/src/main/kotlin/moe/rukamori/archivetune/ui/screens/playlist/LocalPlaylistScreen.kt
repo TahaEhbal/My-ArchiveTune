@@ -475,6 +475,7 @@ fun LocalPlaylistScreen(
     }
 
     var showShuffleOrderDialog by remember { mutableStateOf(false) }
+    var isShufflingOrder by remember { mutableStateOf(false) }
     if (showShuffleOrderDialog) {
         DefaultDialog(
             onDismiss = { showShuffleOrderDialog = false },
@@ -482,7 +483,11 @@ fun LocalPlaylistScreen(
                 Text(
                     text =
                         stringResource(
-                            R.string.shuffle_playlist_order_confirm,
+                            if (playlist?.playlist?.browseId != null) {
+                                R.string.shuffle_playlist_order_confirm_synced
+                            } else {
+                                R.string.shuffle_playlist_order_confirm
+                            },
                             playlist?.playlist?.name.orEmpty(),
                         ),
                     style = MaterialTheme.typography.bodyLarge,
@@ -499,7 +504,22 @@ fun LocalPlaylistScreen(
                 TextButton(
                     onClick = {
                         showShuffleOrderDialog = false
-                        viewModel.shufflePlaylistOrder()
+                        isShufflingOrder = true
+                        coroutineScope.launch {
+                            val success = viewModel.shufflePlaylistOrder()
+                            isShufflingOrder = false
+                            snackbarHostState.showSnackbar(
+                                message =
+                                    context.getString(
+                                        if (success) {
+                                            R.string.shuffle_playlist_order_done
+                                        } else {
+                                            R.string.shuffle_playlist_order_failed
+                                        },
+                                    ),
+                                withDismissAction = true,
+                            )
+                        }
                     },
                     shapes = ButtonDefaults.shapes(),
                 ) {
@@ -829,7 +849,7 @@ fun LocalPlaylistScreen(
                                         )
                                     }
 
-                                    if (editable && playlist.playlist.browseId == null && songs.size > 1) {
+                                    if (editable && songs.size > 1 && !isShufflingOrder) {
                                         MediaDetailIconAction(
                                             icon = R.drawable.shuffle,
                                             contentDescription = R.string.shuffle_playlist_order,

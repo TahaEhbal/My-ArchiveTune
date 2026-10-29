@@ -154,24 +154,41 @@ class LocalPlaylistViewModel
             }
         }
 
-        fun shufflePlaylistOrder() {
-            viewModelScope.launch(Dispatchers.IO) {
-                database.withTransaction {
-                    getPlaylistSongs(playlistId)
-                        .shuffled()
-                        .forEachIndexed { index, playlistSong ->
-                            update(playlistSong.map.copy(position = index))
-                        }
+        /**
+         * Permanently reorders the playlist at random. For playlists synced with YouTube Music the
+         * new order is applied to the account first, one move per song, so the app and the account
+         * stay in step. Returns false if anything could not be applied.
+         */
+        suspend fun shufflePlaylistOrder(): Boolean =
+            withContext(Dispatchers.IO) {
+                val shuffled = database.getPlaylistSongs(playlistId).shuffled()
+                if (shuffled.size < 2) return@withContext true
+
+                val browseId = playlist.value?.playlist?.browseId
+                if (browseId != null) {
+                    val setVideoIds = shuffled.map { it.map.setVideoId }
+                    if (setVideoIds.any { it == null }) return@withContext false
+                    // Build the target order back to front: put each song just before the one after it.
+                    for (index in shuffled.indices.reversed()) {
+                        val moved = setVideoIds[index] ?: return@withContext false
+                        val successor = setVideoIds.getOrNull(index + 1)
+                        val result = YouTube.moveSongPlaylist(browseId, moved, successor)
+                        if (result.isFailure) return@withContext false
+                    }
                 }
+
                 database.withTransaction {
+                    shuffled.forEachIndexed { index, playlistSong ->
+                        update(playlistSong.map.copy(position = index))
+                    }
                     updatePlaylistSortPreference(
                         playlistId = playlistId,
                         sortType = PlaylistSongSortType.CUSTOM.name,
                         descending = sortDescending.value,
                     )
                 }
+                true
             }
-        }
 
         private val _viewCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
         val viewCounts = _viewCounts.asStateFlow()
