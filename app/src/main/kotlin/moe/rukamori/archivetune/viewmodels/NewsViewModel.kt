@@ -86,11 +86,12 @@ class NewsViewModel
         private var lastNotifiedNewsTimestamp = 0L
 
         val latestUnreadNewsTimestamp: StateFlow<Long?> =
-            combine(
+            // Announcements are disabled in this build, so nothing is ever "unread".
+            combine<List<NewsItem>, Long, Long?>(
                 _rawItems,
                 context.dataStore.data.map { prefs -> prefs[NewsLastReadTimestampKey] ?: 0L },
-            ) { items, lastReadTimestamp ->
-                items.maxOfOrNull { it.timestamp }?.takeIf { it > lastReadTimestamp }
+            ) { _, _ ->
+                null
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
         val hasUnreadNews: StateFlow<Boolean> =
@@ -107,7 +108,7 @@ class NewsViewModel
         }
 
         init {
-            fetchNews()
+            // No announcement feed is fetched in this build.
         }
 
         fun fetchNews() {

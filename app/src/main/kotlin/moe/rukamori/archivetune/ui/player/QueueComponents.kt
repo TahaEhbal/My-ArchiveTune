@@ -467,44 +467,6 @@ fun QueueCollapsedContentV2(
                 )
             }
 
-            // Sleep timer button
-            Box(
-                modifier =
-                    Modifier
-                        .size(buttonSize)
-                        .clip(RoundedCornerShape(10.dp))
-                        .border(1.dp, borderColor, RoundedCornerShape(10.dp))
-                        .clickable { onSleepTimerClick() },
-                contentAlignment = Alignment.Center,
-            ) {
-                AnimatedContent(
-                    label = "sleepTimer",
-                    targetState = sleepTimerEnabled,
-                ) { enabled ->
-                    if (enabled) {
-                        Text(
-                            text = makeTimeString(sleepTimerTimeLeft),
-                            color = textBackgroundColor,
-                            fontSize = 10.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center,
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .basicMarquee(),
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(id = R.drawable.bedtime),
-                            contentDescription = null,
-                            modifier = Modifier.size(iconSize),
-                            tint = textBackgroundColor,
-                        )
-                    }
-                }
-            }
-
             // Lyrics button
             Box(
                 modifier =
@@ -670,37 +632,6 @@ fun QueueCollapsedContentV3(
                 }
             }
 
-            // Sleep timer button
-            Box(
-                modifier =
-                    Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onSleepTimerClick() }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                AnimatedContent(
-                    label = "sleepTimer",
-                    targetState = sleepTimerEnabled,
-                ) { enabled ->
-                    if (enabled) {
-                        Text(
-                            text = makeTimeString(sleepTimerTimeLeft),
-                            color = textBackgroundColor.copy(alpha = 0.85f),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(id = R.drawable.bedtime),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = textBackgroundColor.copy(alpha = 0.7f),
-                        )
-                    }
-                }
-            }
-
             // Lyrics button
             Box(
                 modifier =
@@ -819,50 +750,6 @@ fun QueueCollapsedContentV1(
             }
 
             TextButton(
-                onClick = onSleepTimerClick,
-                modifier = Modifier.weight(1.2f),
-                shapes = ButtonDefaults.shapes(),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.bedtime),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = textBackgroundColor,
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    AnimatedContent(
-                        label = "sleepTimer",
-                        targetState = sleepTimerEnabled,
-                    ) { enabled ->
-                        if (enabled) {
-                            Text(
-                                text = makeTimeString(sleepTimerTimeLeft),
-                                color = textBackgroundColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.basicMarquee(),
-                            )
-                        } else {
-                            Text(
-                                text = stringResource(id = R.string.sleep_timer),
-                                color = textBackgroundColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.basicMarquee(),
-                            )
-                        }
-                    }
-                }
-            }
-
-            TextButton(
                 onClick = onShowLyrics,
                 modifier = Modifier.weight(1f),
                 shapes = ButtonDefaults.shapes(),
@@ -975,51 +862,6 @@ fun QueueCollapsedContentV4(
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            // Sleep timer button (circle)
-            Box(
-                modifier =
-                    Modifier
-                        .size(buttonSize)
-                        .clip(CircleShape)
-                        .background(
-                            if (sleepTimerEnabled) {
-                                textBackgroundColor.copy(alpha = 0.2f)
-                            } else {
-                                textBackgroundColor.copy(alpha = 0.1f)
-                            },
-                        ).clickable { onSleepTimerClick() },
-                contentAlignment = Alignment.Center,
-            ) {
-                AnimatedContent(
-                    label = "sleepTimer",
-                    targetState = sleepTimerEnabled,
-                ) { enabled ->
-                    if (enabled) {
-                        Text(
-                            text = makeTimeString(sleepTimerTimeLeft),
-                            color = textBackgroundColor,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center,
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .basicMarquee(),
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(id = R.drawable.bedtime),
-                            contentDescription = null,
-                            modifier = Modifier.size(iconSize),
-                            tint = textBackgroundColor,
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.width(10.dp))
-
             // Lyrics button (pill)
             Box(
                 modifier =
@@ -1101,21 +943,6 @@ fun QueueCollapsedContentV7(
                             contentDescription = device.name,
                             tint = textBackgroundColor,
                             modifier = Modifier.size(24.dp),
-                        )
-                    }
-                    Box(
-                        modifier =
-                            Modifier
-                                .height(24.dp)
-                                .width(1.dp)
-                                .background(textBackgroundColor.copy(alpha = 0.22f)),
-                    )
-                    IconButton(onClick = onMusicTogetherClick, modifier = Modifier.size(46.dp)) {
-                        Icon(
-                            painter = painterResource(R.drawable.person),
-                            contentDescription = stringResource(R.string.music_together),
-                            tint = textBackgroundColor,
-                            modifier = Modifier.size(23.dp),
                         )
                     }
                 }
@@ -1224,49 +1051,6 @@ fun QueueCollapsedContentV8(
                     }
                 }
 
-                Surface(
-                    onClick = onSleepTimerClick,
-                    shape = if (sleepTimerEnabled) RoundedCornerShape(20.dp) else CircleShape,
-                    color = textBackgroundColor.copy(alpha = if (sleepTimerEnabled) 0.16f else 0.08f),
-                    modifier =
-                        if (sleepTimerEnabled) {
-                            Modifier.height(42.dp)
-                        } else {
-                            Modifier.size(42.dp)
-                        },
-                ) {
-                    AnimatedContent(
-                        label = "v7SleepTimer",
-                        targetState = sleepTimerEnabled,
-                    ) { enabled ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                            modifier =
-                                Modifier.padding(
-                                    start = 10.dp,
-                                    end = if (enabled) 12.dp else 10.dp,
-                                ),
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.bedtime),
-                                contentDescription = stringResource(id = R.string.sleep_timer),
-                                modifier = Modifier.size(iconSize),
-                                tint = textBackgroundColor,
-                            )
-                            if (enabled) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = makeTimeString(sleepTimerTimeLeft.coerceAtLeast(0L)),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = textBackgroundColor,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-                }
             }
 
             Surface(

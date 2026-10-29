@@ -74,29 +74,6 @@ fun TopAppBarOverflowMenu(
         )
         OverflowMenuDivider(modifier = Modifier.padding(vertical = 8.dp))
         OverflowAction(
-            label = stringResource(R.string.new_releases),
-            iconRes = R.drawable.new_release,
-            contentColor = contentColor,
-            onClick = remember(onSelect) { { onSelect(MainMenuDestination.NewRelease) } },
-        )
-        OverflowMenuDivider()
-        OverflowAction(
-            label = stringResource(R.string.news),
-            iconRes = R.drawable.newspaper,
-            contentColor = contentColor,
-            hasBadge = hasUnreadNews,
-            badgeDescription = if (hasUnreadNews) stringResource(R.string.news_tooltip_title) else null,
-            onClick = remember(onSelect) { { onSelect(MainMenuDestination.News) } },
-        )
-        OverflowMenuDivider()
-        OverflowAction(
-            label = stringResource(R.string.history),
-            iconRes = R.drawable.history,
-            contentColor = contentColor,
-            onClick = remember(onSelect) { { onSelect(MainMenuDestination.History) } },
-        )
-        OverflowMenuDivider()
-        OverflowAction(
             label = stringResource(R.string.settings),
             iconRes = R.drawable.settings,
             contentColor = contentColor,

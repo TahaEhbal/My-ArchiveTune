@@ -4616,13 +4616,6 @@ fun V10PlayerContent(
                             iconResId = R.drawable.library_add,
                             contentDescription = stringResource(R.string.add_to_playlist),
                         )
-                        IconButton(onClick = onSleepTimerClick) {
-                            Icon(
-                                painter = painterResource(R.drawable.bedtime),
-                                contentDescription = stringResource(R.string.sleep_timer),
-                                tint = accent,
-                            )
-                        }
                         if (sleepTimerEnabled) {
                             Text(
                                 text = makeTimeString(sleepTimerTimeLeft.coerceAtLeast(0L)),
@@ -4678,46 +4671,6 @@ fun V10PlayerContent(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (sleepTimerEnabled) {
-                    val countdownText = makeTimeString(sleepTimerTimeLeft.coerceAtLeast(0L))
-                    Box(
-                        modifier = Modifier
-                            .height(44.dp)
-                            .clip(CircleShape)
-                            .background(accent)
-                            .clickable(onClick = onSleepTimerClick),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CompositionLocalProvider(LocalContentColor provides field) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            ) {
-                                Text(
-                                    text = countdownText,
-                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Icon(
-                                    painter = painterResource(R.drawable.bedtime),
-                                    contentDescription = "Sleep timer",
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    EditorialCircleButton(
-                        onClick = onSleepTimerClick,
-                        accent = field,
-                        field = accent,
-                        size = 44.dp
-                    ) {
-                        Icon(painter = painterResource(R.drawable.bedtime), contentDescription = "Sleep timer", modifier = Modifier.size(22.dp))
-                    }
-                }
-
                 EditorialCircleButton(
                     onClick = onLyricsClick,
                     accent = accent,

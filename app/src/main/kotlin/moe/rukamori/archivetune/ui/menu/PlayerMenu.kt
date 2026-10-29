@@ -184,7 +184,6 @@ fun PlayerMenu(
         remember(librarySong?.song?.isLocal, mediaMetadata.id) {
             librarySong?.song?.isLocal == true || mediaMetadata.id.isLocalMediaId()
         }
-    val castPlayerMenuAction = rememberCastPlayerMenuAction()
 
     // Split artists by configured separators
     data class SplitArtist(
@@ -443,43 +442,6 @@ fun PlayerMenu(
                 NewActionGrid(
                     actions =
                         buildList {
-                            castPlayerMenuAction?.let(::add)
-                            onSleepTimerClick?.let { onClick ->
-                                add(
-                                    NewAction(
-                                        icon = {
-                                            Icon(
-                                                painter = painterResource(R.drawable.bedtime),
-                                                contentDescription = null,
-                                                modifier = Modifier.size(28.dp),
-                                                tint =
-                                                    if (sleepTimerEnabled) {
-                                                        MaterialTheme.colorScheme.primary
-                                                    } else {
-                                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                                    },
-                                            )
-                                        },
-                                        text = stringResource(R.string.sleep_timer),
-                                        onClick = {
-                                            onDismiss()
-                                            onClick()
-                                        },
-                                        backgroundColor =
-                                            if (sleepTimerEnabled) {
-                                                MaterialTheme.colorScheme.primaryContainer
-                                            } else {
-                                                Color.Unspecified
-                                            },
-                                        contentColor =
-                                            if (sleepTimerEnabled) {
-                                                MaterialTheme.colorScheme.onPrimaryContainer
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                    ),
-                                )
-                            }
                             if (!isLocalMedia && !mediaMetadata.isPodcast) {
                                 add(
                                     NewAction(
@@ -640,26 +602,6 @@ fun PlayerMenu(
                                     )
                                 },
                             )
-                            if (!isLocalMedia) {
-                                add(
-                                    NewAction(
-                                        icon = {
-                                            Icon(
-                                                painter = painterResource(R.drawable.fire),
-                                                contentDescription = null,
-                                                modifier = Modifier.size(28.dp),
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        },
-                                        text = stringResource(R.string.music_together),
-                                        onClick = {
-                                            onDismiss()
-                                            playerBottomSheetState.collapseSoft()
-                                            navController.navigate("settings/music_together")
-                                        },
-                                    ),
-                                )
-                            }
                             if (isQueueTrigger != true) {
                                 val aodBgColor = if (aodFeatureEnabled) MaterialTheme.colorScheme.primary else Color.Unspecified
                                 val aodContentColor = if (aodFeatureEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant

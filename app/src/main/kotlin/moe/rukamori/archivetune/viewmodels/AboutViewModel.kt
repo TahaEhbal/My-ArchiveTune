@@ -431,12 +431,6 @@ class AboutViewModel
                             url = "https://t.me/ArchiveTuneGC",
                         ),
                         AboutLinkUiModel(
-                            id = "donate",
-                            iconResId = R.drawable.coffee,
-                            labelResId = R.string.about_content_desc_donate,
-                            url = "https://miuka.moe/donate",
-                        ),
-                        AboutLinkUiModel(
                             id = "discord",
                             iconResId = R.drawable.discord,
                             labelResId = R.string.discord,

@@ -1623,15 +1623,11 @@ class MainActivity : ComponentActivity() {
                                 !hasPressed && (dataStore[LaunchCountKey] ?: 0) >= remindAfter
                             }
 
+                        // The "support development" popup is disabled in this build.
                         if (shouldShow) {
-                            var waited = 0L
-                            val waitStep = 500L
-                            val maxWait = 30_000L
-                            while (bottomSheetPageState.isVisible && waited < maxWait) {
-                                delay(waitStep)
-                                waited += waitStep
+                            withContext(Dispatchers.IO) {
+                                dataStore.edit { prefs -> prefs[RemindAfterKey] = Int.MAX_VALUE }
                             }
-                            showStarDialog = true
                         }
                     }
 
@@ -3238,23 +3234,6 @@ private fun HomeOverflowFab(
                     HomeOverflowMenuIcon(
                         iconRes = R.drawable.mic,
                         contentDescription = stringResource(R.string.music_recognition),
-                        pureBlack = pureBlack,
-                    )
-                },
-                colors = menuItemColors,
-            )
-            OverflowMenuDivider()
-            DropdownMenuItem(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
-                text = { Text(stringResource(R.string.music_together)) },
-                onClick = {
-                    onExpandedChange(false)
-                    onMusicTogetherClick()
-                },
-                leadingIcon = {
-                    HomeOverflowMenuIcon(
-                        iconRes = R.drawable.multi_user,
-                        contentDescription = null,
                         pureBlack = pureBlack,
                     )
                 },

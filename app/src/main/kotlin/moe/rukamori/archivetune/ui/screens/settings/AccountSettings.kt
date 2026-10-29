@@ -414,15 +414,7 @@ fun AccountSettings(
                             subtitle = stringResource(R.string.account_integrations_summary),
                             onClick = { navController.navigate("settings/integration") },
                             index = 0,
-                            count = 2,
-                        )
-
-                        ExpressiveActionRow(
-                            icon = painterResource(R.drawable.fire),
-                            title = stringResource(R.string.music_together),
-                            onClick = { navController.navigate("settings/music_together") },
-                            index = 1,
-                            count = 2,
+                            count = 1,
                         )
                     }
                 }
