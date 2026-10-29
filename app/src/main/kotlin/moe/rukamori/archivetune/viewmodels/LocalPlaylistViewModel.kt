@@ -17,8 +17,10 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
@@ -40,6 +42,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import moe.rukamori.archivetune.R
 import moe.rukamori.archivetune.constants.HideExplicitKey
 import moe.rukamori.archivetune.constants.HideVideoKey
@@ -69,6 +72,16 @@ import moe.rukamori.archivetune.utils.reportException
 import java.text.Collator
 import java.util.Locale
 import javax.inject.Inject
+
+/** Progress of the "shuffle playlist order" action while it syncs to YouTube Music. */
+@Immutable
+data class ShuffleProgress(
+    val done: Int,
+    val total: Int,
+)
+
+private const val RemoteMoveTimeoutMs = 30_000L
+private val shuffleScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 @HiltViewModel
 class LocalPlaylistViewModel
@@ -159,36 +172,70 @@ class LocalPlaylistViewModel
          * new order is applied to the account first, one move per song, so the app and the account
          * stay in step. Returns false if anything could not be applied.
          */
-        suspend fun shufflePlaylistOrder(): Boolean =
-            withContext(Dispatchers.IO) {
-                val shuffled = database.getPlaylistSongs(playlistId).shuffled()
-                if (shuffled.size < 2) return@withContext true
+        private val _shuffleProgress = MutableStateFlow<ShuffleProgress?>(null)
 
-                val browseId = playlist.value?.playlist?.browseId
-                if (browseId != null) {
-                    val setVideoIds = shuffled.map { it.map.setVideoId }
-                    if (setVideoIds.any { it == null }) return@withContext false
-                    // Build the target order back to front: put each song just before the one after it.
-                    for (index in shuffled.indices.reversed()) {
-                        val moved = setVideoIds[index] ?: return@withContext false
-                        val successor = setVideoIds.getOrNull(index + 1)
-                        val result = YouTube.moveSongPlaylist(browseId, moved, successor)
-                        if (result.isFailure) return@withContext false
-                    }
-                }
+        /** Non-null while a shuffle is running; total is 0 until the YouTube sync starts. */
+        val shuffleProgress: StateFlow<ShuffleProgress?> = _shuffleProgress.asStateFlow()
 
-                database.withTransaction {
-                    shuffled.forEachIndexed { index, playlistSong ->
-                        update(playlistSong.map.copy(position = index))
+        /**
+         * Permanently reorders the playlist at random. The new order is saved on this phone straight
+         * away. For playlists synced with YouTube Music it is then applied to the account one song
+         * at a time in the background, which can take a while on long playlists. [onFinished] is
+         * called with false if the YouTube part could not be completed.
+         */
+        fun shufflePlaylistOrder(onFinished: (Boolean) -> Unit) {
+            if (_shuffleProgress.value != null) return
+            _shuffleProgress.value = ShuffleProgress(done = 0, total = 0)
+            val browseId = playlist.value?.playlist?.browseId
+            // Not tied to the screen, so leaving the playlist doesn't stop a half-finished sync.
+            shuffleScope.launch {
+                val success =
+                    try {
+                        runShuffle(browseId)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        false
+                    } finally {
+                        _shuffleProgress.value = null
                     }
-                    updatePlaylistSortPreference(
-                        playlistId = playlistId,
-                        sortType = PlaylistSongSortType.CUSTOM.name,
-                        descending = sortDescending.value,
-                    )
-                }
-                true
+                withContext(Dispatchers.Main) { onFinished(success) }
             }
+        }
+
+        private suspend fun runShuffle(browseId: String?): Boolean {
+            val shuffled = database.getPlaylistSongs(playlistId).shuffled()
+            if (shuffled.size < 2) return true
+
+            // 1. Save the new order on this phone first so it shows up immediately.
+            database.withTransaction {
+                shuffled.forEachIndexed { index, playlistSong ->
+                    update(playlistSong.map.copy(position = index))
+                }
+                updatePlaylistSortPreference(
+                    playlistId = playlistId,
+                    sortType = PlaylistSongSortType.CUSTOM.name,
+                    descending = sortDescending.value,
+                )
+            }
+            if (browseId == null) return true
+
+            // 2. Apply it to the YouTube account, back to front: put each song just before the one after it.
+            val setVideoIds = shuffled.map { it.map.setVideoId }
+            if (setVideoIds.any { it == null }) return false
+            _shuffleProgress.value = ShuffleProgress(done = 0, total = shuffled.size)
+            for ((step, index) in shuffled.indices.reversed().withIndex()) {
+                val moved = setVideoIds[index] ?: return false
+                val successor = setVideoIds.getOrNull(index + 1)
+                val result =
+                    withTimeoutOrNull(RemoteMoveTimeoutMs) {
+                        YouTube.moveSongPlaylist(browseId, moved, successor)
+                    }
+                if (result == null || result.isFailure) return false
+                _shuffleProgress.value = ShuffleProgress(done = step + 1, total = shuffled.size)
+            }
+            return true
+        }
 
         private val _viewCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
         val viewCounts = _viewCounts.asStateFlow()

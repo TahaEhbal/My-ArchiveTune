@@ -475,7 +475,8 @@ fun LocalPlaylistScreen(
     }
 
     var showShuffleOrderDialog by remember { mutableStateOf(false) }
-    var isShufflingOrder by remember { mutableStateOf(false) }
+    val shuffleProgress by viewModel.shuffleProgress.collectAsStateWithLifecycle()
+    val isShufflingOrder = shuffleProgress != null
     if (showShuffleOrderDialog) {
         DefaultDialog(
             onDismiss = { showShuffleOrderDialog = false },
@@ -504,21 +505,20 @@ fun LocalPlaylistScreen(
                 TextButton(
                     onClick = {
                         showShuffleOrderDialog = false
-                        isShufflingOrder = true
-                        coroutineScope.launch {
-                            val success = viewModel.shufflePlaylistOrder()
-                            isShufflingOrder = false
-                            snackbarHostState.showSnackbar(
-                                message =
-                                    context.getString(
-                                        if (success) {
-                                            R.string.shuffle_playlist_order_done
-                                        } else {
-                                            R.string.shuffle_playlist_order_failed
-                                        },
-                                    ),
-                                withDismissAction = true,
-                            )
+                        viewModel.shufflePlaylistOrder { success ->
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar(
+                                    message =
+                                        context.getString(
+                                            if (success) {
+                                                R.string.shuffle_playlist_order_done
+                                            } else {
+                                                R.string.shuffle_playlist_order_failed
+                                            },
+                                        ),
+                                    withDismissAction = true,
+                                )
+                            }
                         }
                     },
                     shapes = ButtonDefaults.shapes(),
@@ -849,7 +849,22 @@ fun LocalPlaylistScreen(
                                         )
                                     }
 
-                                    if (editable && songs.size > 1 && !isShufflingOrder) {
+                                    val currentShuffleProgress = shuffleProgress
+                                    if (currentShuffleProgress != null) {
+                                        if (currentShuffleProgress.total > 0) {
+                                            Text(
+                                                text =
+                                                    stringResource(
+                                                        R.string.shuffle_playlist_order_progress,
+                                                        currentShuffleProgress.done,
+                                                        currentShuffleProgress.total,
+                                                    ),
+                                                color = contentColor,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                modifier = Modifier.padding(horizontal = 8.dp),
+                                            )
+                                        }
+                                    } else if (editable && songs.size > 1) {
                                         MediaDetailIconAction(
                                             icon = R.drawable.shuffle,
                                             contentDescription = R.string.shuffle_playlist_order,
