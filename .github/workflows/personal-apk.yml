@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build debug APK (arm64)
+    name: Build optimised APK (arm64)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -64,9 +64,9 @@ jobs:
 
       # Version numbers go up with every build so the in-app updater can tell
       # when a newer build exists. The updater looks at this repository's releases.
-      - name: Build debug APK
+      - name: Build optimised APK
         run: >
-          ./gradlew assembleGmsMobileArm64Debug
+          ./gradlew assembleGmsMobileArm64Personal
           -PnightlyVersionName=${VERSION_NAME}
           -PbuildVersionCode=$((142 + VERSION_CODE))
         env:

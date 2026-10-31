@@ -225,6 +225,16 @@ android {
             applicationIdSuffix = ".debug"
             isDebuggable = true
         }
+        // Optimised build for personal sideloading: release-style (R8 shrinking, not debuggable,
+        // no LeakCanary heap dumps) but keeps the ".debug" package name and the debug signing key,
+        // so it installs as an update over the previously installed personal builds.
+        create("personal") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            matchingFallbacks += listOf("release")
+        }
         create("nightly") {
             applicationIdSuffix = ".nightly"
             isDebuggable = false

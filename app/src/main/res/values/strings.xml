@@ -262,6 +262,7 @@
     <string name="source">Source</string>
     <string name="save">Save</string>
     <string name="edit_playlist">Edit playlist</string>
+    <string name="made_by_taha" translatable="false">Made by Taha</string>
     <string name="shuffle_playlist_order">Shuffle playlist order</string>
     <string name="shuffle_playlist_order_confirm">Permanently reorder \"%1$s\" into a random order? The current order can\'t be restored.</string>
     <string name="shuffle_playlist_order_confirm_synced">Permanently reorder \"%1$s\" into a random order? The new order shows straight away, then is copied to your YouTube Music account in the background, which can take a minute or more for long playlists. It can\'t be undone.</string>
