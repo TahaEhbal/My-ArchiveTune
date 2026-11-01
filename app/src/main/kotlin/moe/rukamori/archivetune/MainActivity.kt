@@ -13,7 +13,13 @@ import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
@@ -1108,6 +1114,42 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    // Voice / lyrics search: the phone's own speech recogniser turns spoken or sung
+                    // words into text, which is then searched on YouTube Music (it matches lyrics).
+                    val voiceSearchContext = LocalContext.current
+                    val voiceSearchPrompt = stringResource(R.string.voice_search_prompt)
+                    val voiceSearchUnavailable = stringResource(R.string.voice_search_unavailable)
+                    val voiceSearchLauncher =
+                        rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                            if (result.resultCode == Activity.RESULT_OK) {
+                                val spoken =
+                                    result.data
+                                        ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                                        ?.firstOrNull()
+                                        ?.trim()
+                                        .orEmpty()
+                                if (spoken.isNotEmpty()) {
+                                    onQueryChange(TextFieldValue(spoken, TextRange(spoken.length)))
+                                    onSearch(spoken)
+                                }
+                            }
+                        }
+                    val startVoiceSearch: () -> Unit = {
+                        try {
+                            voiceSearchLauncher.launch(
+                                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                    putExtra(
+                                        RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                        RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+                                    )
+                                    putExtra(RecognizerIntent.EXTRA_PROMPT, voiceSearchPrompt)
+                                },
+                            )
+                        } catch (_: ActivityNotFoundException) {
+                            Toast.makeText(voiceSearchContext, voiceSearchUnavailable, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+
                     var openSearchImmediately: Boolean by remember {
                         mutableStateOf(intent?.action == ACTION_SEARCH)
                     }
@@ -2139,6 +2181,14 @@ class MainActivity : ComponentActivity() {
                                                                     Icon(
                                                                         painter = painterResource(R.drawable.close),
                                                                         contentDescription = null,
+                                                                    )
+                                                                }
+                                                            }
+                                                            if (searchSource == SearchSource.ONLINE) {
+                                                                IconButton(onClick = startVoiceSearch) {
+                                                                    Icon(
+                                                                        painter = painterResource(R.drawable.mic),
+                                                                        contentDescription = stringResource(R.string.voice_search),
                                                                     )
                                                                 }
                                                             }
