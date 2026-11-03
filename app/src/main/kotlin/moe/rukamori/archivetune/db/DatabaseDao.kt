@@ -2364,6 +2364,12 @@ interface DatabaseDao {
     @Query("SELECT MAX(position) FROM playlist_song_map WHERE playlistId = :playlistId")
     fun maxPlaylistSongPosition(playlistId: String): Int?
 
+    @Query("SELECT id FROM playlist WHERE name = :name COLLATE NOCASE ORDER BY rowId LIMIT 1")
+    suspend fun playlistIdByNameIgnoreCase(name: String): String?
+
+    @Query("SELECT lastUpdateTime FROM playlist WHERE id = :playlistId LIMIT 1")
+    suspend fun playlistLastUpdateTime(playlistId: String): LocalDateTime?
+
     @RawQuery
     fun raw(supportSQLiteQuery: SupportSQLiteQuery): Int
 

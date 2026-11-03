@@ -1150,4 +1150,9 @@
     <string name="modules_session_verify">Verify connection</string>
     <string name="modules_session_connected">Module connection verified</string>
     <string name="modules_session_failed">Module verification failed or expired. Open module settings to try again.</string>
+    <string name="refresh_recommendations">Refresh recommendations</string>
+    <string name="recommendations_done">Found %1$d songs you might like</string>
+    <string name="recommendations_no_source">Create a playlist called \"the main playlist\" first</string>
+    <string name="recommendations_failed">Couldn\'t get recommendations — check your connection</string>
+    <string name="recommendations_busy">Finding songs you\'ll like…</string>
 </resources>

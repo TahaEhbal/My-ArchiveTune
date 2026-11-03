@@ -64,6 +64,8 @@ import moe.rukamori.archivetune.models.PlaylistSuggestionPage
 import moe.rukamori.archivetune.models.PlaylistSuggestionQuery
 import moe.rukamori.archivetune.models.toMediaMetadata
 import moe.rukamori.archivetune.playlist.RemovePlaylistCoverUseCase
+import moe.rukamori.archivetune.repository.RecommendedPlaylistRepository
+import moe.rukamori.archivetune.repository.RecommendedPlaylistResult
 import moe.rukamori.archivetune.playlist.UpdatePlaylistCoverUseCase
 import moe.rukamori.archivetune.utils.PlaylistSuggestionQueryBuilder
 import moe.rukamori.archivetune.utils.SyncUtils
@@ -92,9 +94,21 @@ class LocalPlaylistViewModel
         private val syncUtils: SyncUtils,
         private val updatePlaylistCover: UpdatePlaylistCoverUseCase,
         private val removePlaylistCover: RemovePlaylistCoverUseCase,
+        private val recommendedPlaylist: RecommendedPlaylistRepository,
         savedStateHandle: SavedStateHandle,
     ) : ViewModel() {
         val playlistId = savedStateHandle.get<String>("playlistId")!!
+
+        val isRecommendedPlaylist: Boolean = playlistId == RecommendedPlaylistRepository.PLAYLIST_ID
+        val isRefreshingRecommended: StateFlow<Boolean> = recommendedPlaylist.isRefreshing
+
+        /** Rebuilds the "Recommended for you" playlist from "the main playlist". */
+        fun refreshRecommended(onFinished: (RecommendedPlaylistResult) -> Unit) {
+            shuffleScope.launch {
+                val result = recommendedPlaylist.refresh()
+                withContext(Dispatchers.Main) { onFinished(result) }
+            }
+        }
         val playlist =
             database
                 .playlist(playlistId)

@@ -427,8 +427,14 @@ class LibraryPlaylistsViewModel
         @ApplicationContext context: Context,
         private val database: MusicDatabase,
         private val downloadUtil: DownloadUtil,
+        private val recommendedPlaylist: moe.rukamori.archivetune.repository.RecommendedPlaylistRepository,
         refreshLibrary: RefreshLibraryUseCase,
     ) : LibraryRefreshViewModel(refreshLibrary) {
+        init {
+            // Make sure "Recommended for you" exists and is fresh (rebuilt at most once a day).
+            viewModelScope.launch(Dispatchers.IO) { recommendedPlaylist.refreshIfStale() }
+        }
+
         val allPlaylists =
             context.dataStore.data
                 .map {

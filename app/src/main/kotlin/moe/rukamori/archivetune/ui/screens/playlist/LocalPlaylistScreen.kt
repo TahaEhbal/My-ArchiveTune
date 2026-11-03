@@ -91,6 +91,7 @@ import moe.rukamori.archivetune.LocalDownloadUtil
 import moe.rukamori.archivetune.LocalPlayerAwareWindowInsets
 import moe.rukamori.archivetune.LocalPlayerConnection
 import moe.rukamori.archivetune.R
+import moe.rukamori.archivetune.repository.RecommendedPlaylistResult
 import moe.rukamori.archivetune.constants.AppBarHeight
 import moe.rukamori.archivetune.constants.PlaylistEditLockKey
 import moe.rukamori.archivetune.constants.PlaylistSongSortType
@@ -477,6 +478,7 @@ fun LocalPlaylistScreen(
     var showShuffleOrderDialog by remember { mutableStateOf(false) }
     val shuffleProgress by viewModel.shuffleProgress.collectAsStateWithLifecycle()
     val isShufflingOrder = shuffleProgress != null
+    val isRefreshingRecommended by viewModel.isRefreshingRecommended.collectAsStateWithLifecycle()
     if (showShuffleOrderDialog) {
         DefaultDialog(
             onDismiss = { showShuffleOrderDialog = false },
@@ -849,6 +851,44 @@ fun LocalPlaylistScreen(
                                         )
                                     }
 
+                                    if (viewModel.isRecommendedPlaylist) {
+                                        if (isRefreshingRecommended) {
+                                            Text(
+                                                text = stringResource(R.string.recommendations_busy),
+                                                color = contentColor,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                modifier = Modifier.padding(horizontal = 8.dp),
+                                            )
+                                        } else {
+                                            MediaDetailIconAction(
+                                                icon = R.drawable.sync,
+                                                contentDescription = R.string.refresh_recommendations,
+                                                contentColor = contentColor,
+                                                onClick = {
+                                                    viewModel.refreshRecommended { result ->
+                                                        coroutineScope.launch {
+                                                            snackbarHostState.showSnackbar(
+                                                                message =
+                                                                    when (result) {
+                                                                        is RecommendedPlaylistResult.Success ->
+                                                                            context.getString(
+                                                                                R.string.recommendations_done,
+                                                                                result.count,
+                                                                            )
+                                                                        RecommendedPlaylistResult.NoSource ->
+                                                                            context.getString(R.string.recommendations_no_source)
+                                                                        RecommendedPlaylistResult.NothingFound ->
+                                                                            context.getString(R.string.recommendations_failed)
+                                                                    },
+                                                                withDismissAction = true,
+                                                            )
+                                                        }
+                                                    }
+                                                },
+                                            )
+                                        }
+                                    }
+
                                     val currentShuffleProgress = shuffleProgress
                                     if (currentShuffleProgress != null) {
                                         if (currentShuffleProgress.total > 0) {
@@ -864,7 +904,7 @@ fun LocalPlaylistScreen(
                                                 modifier = Modifier.padding(horizontal = 8.dp),
                                             )
                                         }
-                                    } else if (editable && songs.size > 1) {
+                                    } else if (editable && songs.size > 1 && !viewModel.isRecommendedPlaylist) {
                                         MediaDetailIconAction(
                                             icon = R.drawable.shuffle,
                                             contentDescription = R.string.shuffle_playlist_order,
