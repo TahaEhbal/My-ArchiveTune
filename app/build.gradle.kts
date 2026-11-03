@@ -233,10 +233,8 @@ android {
             applicationIdSuffix = ".debug"
             signingConfig = signingConfigs.getByName("debug")
             isDebuggable = false
-            // R8 shrinking is switched off while we check whether it broke stream lookup
-            // ("No stream available") and audio. Still not debuggable and no LeakCanary.
-            isMinifyEnabled = false
-            isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             matchingFallbacks += listOf("release")
         }
         create("nightly") {
