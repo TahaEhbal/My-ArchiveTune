@@ -1155,4 +1155,5 @@
     <string name="recommendations_no_source">Create a playlist called \"the main playlist\" first</string>
     <string name="recommendations_failed">Couldn\'t get recommendations — check your connection</string>
     <string name="recommendations_busy">Finding songs you\'ll like…</string>
+    <string name="upcoming_song_unavailable">Coming up: \"%1$s\" couldn\'t be loaded and may not play</string>
 </resources>

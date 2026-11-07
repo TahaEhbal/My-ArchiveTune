@@ -1239,6 +1239,23 @@ class MusicService :
         nextStreamPreloader.warmAudioBytes = ::warmUpcomingAudio
         nextStreamPreloader.onUpcomingFailure = { mediaId, cause ->
             Timber.tag("AudioStreamResolver").w(cause, "Upcoming song %s could not be preloaded", mediaId)
+            scope.launch(Dispatchers.Main) {
+                val title =
+                    (0 until player.mediaItemCount)
+                        .map(player::getMediaItemAt)
+                        .firstOrNull { (it.localConfiguration?.customCacheKey ?: it.mediaId).trim() == mediaId }
+                        ?.mediaMetadata
+                        ?.title
+                        ?.toString()
+                        ?.takeIf(String::isNotBlank)
+                        ?: mediaId
+                Toast
+                    .makeText(
+                        this@MusicService,
+                        getString(R.string.upcoming_song_unavailable, title),
+                        Toast.LENGTH_LONG,
+                    ).show()
+            }
         }
         observePlaybackPreloadConfiguration()
             .collect(scope) { configuration ->
