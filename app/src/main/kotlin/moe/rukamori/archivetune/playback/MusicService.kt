@@ -65,6 +65,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.cache.CacheWriter
+import kotlinx.coroutines.currentCoroutineContext
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
@@ -1234,6 +1236,10 @@ class MusicService :
                 }
         sponsorBlockPlaybackController.attach(player, scope)
         playerInitialized.value = true
+        nextStreamPreloader.warmAudioBytes = ::warmUpcomingAudio
+        nextStreamPreloader.onUpcomingFailure = { mediaId, cause ->
+            Timber.tag("AudioStreamResolver").w(cause, "Upcoming song %s could not be preloaded", mediaId)
+        }
         observePlaybackPreloadConfiguration()
             .collect(scope) { configuration ->
                 playbackPreloadConfiguration = configuration
@@ -7232,49 +7238,96 @@ class MusicService :
             return
         }
 
-        val nextMediaItemIndex = player.nextMediaItemIndex
-        if (nextMediaItemIndex == C.INDEX_UNSET ||
-            nextMediaItemIndex == player.currentMediaItemIndex ||
-            nextMediaItemIndex !in 0 until player.mediaItemCount
-        ) {
+        // Look a couple of songs ahead (following shuffle / repeat-all) so several are always ready.
+        val currentIndex = player.currentMediaItemIndex
+        val lookAheadRepeatMode =
+            if (player.repeatMode == Player.REPEAT_MODE_ALL) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
+        val upcomingIndices = mutableListOf<Int>()
+        var cursor = currentIndex
+        repeat(PRELOAD_LOOKAHEAD_SONGS) {
+            cursor = player.currentTimeline.getNextWindowIndex(cursor, lookAheadRepeatMode, player.shuffleModeEnabled)
+            if (cursor == C.INDEX_UNSET || cursor == currentIndex || cursor in upcomingIndices) return@repeat
+            if (cursor in 0 until player.mediaItemCount) upcomingIndices += cursor
+        }
+        if (upcomingIndices.isEmpty()) {
             nextStreamPreloader.cancel()
             return
         }
 
-        val nextMediaItem = player.getMediaItemAt(nextMediaItemIndex)
-        val nextMediaId =
-            (nextMediaItem.localConfiguration?.customCacheKey ?: nextMediaItem.mediaId)
-                .trim()
-                .takeIf(String::isNotEmpty)
         val currentMediaId =
             player.currentMediaItem
                 ?.let { mediaItem -> mediaItem.localConfiguration?.customCacheKey ?: mediaItem.mediaId }
                 ?.trim()
                 ?.takeIf(String::isNotEmpty)
-        val nextUri = nextMediaItem.localConfiguration?.uri
-        if (nextMediaId == null ||
-            nextMediaId == currentMediaId ||
-            nextMediaId.isLocalMediaId() ||
-            nextUri == null ||
-            nextUri.shouldBypassYouTubeResolver()
-        ) {
-            nextStreamPreloader.cancel()
-            return
-        }
 
-        nextStreamPreloader.updateTarget(
-            request =
-                AudioStreamRequest(
-                    mediaId = nextMediaId,
-                    playlistId = null,
-                    quality = configuration.quality,
-                    networkMetered = false,
-                    purpose = StreamPurpose.PLAYBACK,
-                    authState = configuration.authState,
-                    pinnedFormatId = null,
-                    moduleMetadata = nextMediaItem.metadata?.moduleMatchMetadata(),
-                ),
-        )
+        val items =
+            upcomingIndices.mapNotNull { index ->
+                val mediaItem = player.getMediaItemAt(index)
+                val mediaId =
+                    (mediaItem.localConfiguration?.customCacheKey ?: mediaItem.mediaId)
+                        .trim()
+                        .takeIf(String::isNotEmpty)
+                val uri = mediaItem.localConfiguration?.uri
+                if (mediaId == null ||
+                    mediaId == currentMediaId ||
+                    mediaId.isLocalMediaId() ||
+                    uri == null ||
+                    uri.shouldBypassYouTubeResolver()
+                ) {
+                    null
+                } else {
+                    NextStreamPreloader.PreloadItem(
+                        request =
+                            AudioStreamRequest(
+                                mediaId = mediaId,
+                                playlistId = null,
+                                quality = configuration.quality,
+                                networkMetered = false,
+                                purpose = StreamPurpose.PLAYBACK,
+                                authState = configuration.authState,
+                                pinnedFormatId = null,
+                                moduleMetadata = mediaItem.metadata?.moduleMatchMetadata(),
+                            ),
+                        uri = uri,
+                    )
+                }
+            }
+
+        if (items.isEmpty()) {
+            nextStreamPreloader.cancel()
+        } else {
+            nextStreamPreloader.updateTargets(items)
+        }
+    }
+
+    /**
+     * Downloads the first [PRELOAD_AUDIO_BYTES] of an upcoming song into the player cache, going
+     * through the same data source stack as real playback. Any failure (bad link, 403, offline)
+     * is thrown so the preloader can retry before the song is actually due.
+     */
+    private suspend fun warmUpcomingAudio(item: NextStreamPreloader.PreloadItem) {
+        if (isLowDataModeActive()) return
+        val uri = item.uri ?: return
+        val key = item.request.mediaId
+        if (key in cacheBypassMediaIds || uri.shouldBypassPlayerCache()) return
+        if (playerCache.isFullyCached(key) || downloadCache.isFullyCached(key)) return
+
+        val dataSpec =
+            DataSpec
+                .Builder()
+                .setUri(uri)
+                .setKey(key)
+                .setPosition(0L)
+                .setLength(PRELOAD_AUDIO_BYTES)
+                .build()
+        val cacheDataSource = createPlayerCacheDataSourceFactory(cacheWriteEnabled = true).createDataSource()
+        val writer = CacheWriter(cacheDataSource, dataSpec, null, null)
+        val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { writer.cancel() }
+        try {
+            withContext(Dispatchers.IO) { writer.cache() }
+        } finally {
+            cancelHandle?.dispose()
+        }
     }
 
     override fun onEvents(
@@ -8970,6 +9023,8 @@ class MusicService :
         private const val PLAYBACK_FORMAT_ID_METADATA_KEY = "archivetune_playback_format_id"
         const val CHUNK_LENGTH = 8 * 1024 * 1024L
         val RETRYABLE_STREAM_RESPONSE_CODES = setOf(403, 404, 410, 416)
+        private const val PRELOAD_LOOKAHEAD_SONGS = 2
+        private const val PRELOAD_AUDIO_BYTES = 1_048_576L
         const val PERSISTENT_QUEUE_FILE = "persistent_queue.data"
         const val PERSISTENT_AUTOMIX_FILE = "persistent_automix.data"
         const val PERSISTENT_PLAYER_STATE_FILE = "persistent_player_state.data"
