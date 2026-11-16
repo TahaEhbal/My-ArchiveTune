@@ -25,6 +25,7 @@ import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.ANDROID
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.IOS
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.MWEB
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.TVHTML5
+import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.TVHTML5_DOWNGRADED
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.VISIONOS
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.WEB
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.WEB_CREATOR
@@ -132,6 +133,7 @@ object YTPlayerUtils {
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> =
         arrayOf(
             VISIONOS,
+            TVHTML5_DOWNGRADED,
             ANDROID_VR_1_65_10,
             WEB_REMIX,
             WEB,
