@@ -133,6 +133,8 @@ class App :
         } catch (_: Exception) {
         }
 
+        Timber.plant(moe.rukamori.archivetune.utils.PlaybackDiagnostics)
+
         initializeGatekeeper()
         initializeCriticalSync()
         initializeDeferredAsync()

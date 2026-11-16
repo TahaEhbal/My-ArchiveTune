@@ -544,6 +544,13 @@ private fun buildPlaybackErrorDetails(
             throwable = throwable.cause
             depth++
         }
+
+        val recentLog = moe.rukamori.archivetune.utils.PlaybackDiagnostics.dump()
+        if (recentLog.isNotBlank()) {
+            appendLine()
+            appendLine("Recent log:")
+            appendLine(recentLog)
+        }
     }.trim()
 
 private val PlaybackErrorDialogMaxWidth: Dp = 760.dp
