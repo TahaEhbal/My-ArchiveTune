@@ -322,10 +322,19 @@ class ResolveAudioStreamUseCase
             request: AudioStreamRequest,
             priority: StreamResolutionPriority,
         ): ResolvedAudioStream {
+            // If the signed-in (account-bound) route was refused for this song, try the anonymous
+            // route, which uses a different client and a differently bound playback token.
+            val baseAuthState =
+                if (request.authState.hasLoginCookie && YTPlayerUtils.isSignedInStreamRouteBlocked(request.mediaId)) {
+                    Timber.tag(TAG).i("Signed-in stream was refused for %s; resolving anonymously", request.mediaId)
+                    YTPlayerUtils.anonymousPlaybackAuthState(request.authState)
+                } else {
+                    request.authState
+                }
             val resolvedAuthState =
                 YTPlayerUtils.ensureYoutubeiPoTokensForPlayback(
                     videoId = request.mediaId,
-                    authState = request.authState,
+                    authState = baseAuthState,
                 )
             return youtubeiRepository.resolve(
                 request = request.copy(authState = resolvedAuthState),
