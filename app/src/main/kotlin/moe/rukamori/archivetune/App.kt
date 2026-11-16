@@ -280,13 +280,13 @@ class App :
                         val url = if (provider == "Custom") customUrl else dnsProviderUrls[provider]
                         if (!url.isNullOrBlank() && url.startsWith("https://")) {
                             runCatching {
-                                YouTube.dns = YouTube.createDnsOverHttps(url)
+                                YouTube.dns = moe.rukamori.archivetune.utils.Ipv4PreferredDns.wrap(YouTube.createDnsOverHttps(url))
                             }
                         } else {
-                            YouTube.dns = Dns.SYSTEM
+                            YouTube.dns = moe.rukamori.archivetune.utils.Ipv4PreferredDns.wrap(Dns.SYSTEM)
                         }
                     } else {
-                        YouTube.dns = Dns.SYSTEM
+                        YouTube.dns = moe.rukamori.archivetune.utils.Ipv4PreferredDns.wrap(Dns.SYSTEM)
                     }
                 }
         }
