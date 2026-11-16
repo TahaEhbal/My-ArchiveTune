@@ -1240,21 +1240,26 @@ class MusicService :
         nextStreamPreloader.onUpcomingFailure = { mediaId, cause ->
             Timber.tag("AudioStreamResolver").w(cause, "Upcoming song %s could not be preloaded", mediaId)
             scope.launch(Dispatchers.Main) {
-                val title =
-                    (0 until player.mediaItemCount)
-                        .map(player::getMediaItemAt)
-                        .firstOrNull { (it.localConfiguration?.customCacheKey ?: it.mediaId).trim() == mediaId }
-                        ?.mediaMetadata
-                        ?.title
-                        ?.toString()
-                        ?.takeIf(String::isNotBlank)
-                        ?: mediaId
-                Toast
-                    .makeText(
-                        this@MusicService,
-                        getString(R.string.upcoming_song_unavailable, title),
-                        Toast.LENGTH_LONG,
-                    ).show()
+                val index =
+                    (0 until player.mediaItemCount).firstOrNull { i ->
+                        val item = player.getMediaItemAt(i)
+                        (item.localConfiguration?.customCacheKey ?: item.mediaId).trim() == mediaId
+                    } ?: return@launch
+                if (index == player.currentMediaItemIndex) return@launch
+                val item = player.getMediaItemAt(index)
+                val title = item.mediaMetadata.title?.toString()?.takeIf(String::isNotBlank) ?: mediaId
+                val alternate =
+                    if (alternateVersionTried.add(mediaId)) findAlternateVersion(item) else null
+                if (alternate != null && index in 0 until player.mediaItemCount &&
+                    (player.getMediaItemAt(index).localConfiguration?.customCacheKey ?: player.getMediaItemAt(index).mediaId).trim() == mediaId
+                ) {
+                    swapQueueItem(index, alternate)
+                    Toast.makeText(this@MusicService, getString(R.string.upcoming_song_swapped, title), Toast.LENGTH_LONG).show()
+                } else {
+                    Toast
+                        .makeText(this@MusicService, getString(R.string.upcoming_song_unavailable, title), Toast.LENGTH_LONG)
+                        .show()
+                }
             }
         }
         observePlaybackPreloadConfiguration()
@@ -3638,6 +3643,60 @@ class MusicService :
 
     private fun waitOnNetworkError() {
         waitingForNetworkConnection.value = true
+    }
+
+    private val alternateVersionTried = HashSet<String>()
+
+    /**
+     * Finds another upload of the same song (e.g. the album audio instead of a music video that
+     * YouTube refuses to stream to us). Returns null if nothing close enough is found.
+     */
+    private suspend fun findAlternateVersion(mediaItem: MediaItem): moe.rukamori.archivetune.innertube.models.SongItem? {
+        val mediaId = (mediaItem.localConfiguration?.customCacheKey ?: mediaItem.mediaId).trim()
+        val title = mediaItem.mediaMetadata.title?.toString()?.trim().orEmpty()
+        if (title.isEmpty()) return null
+        val artist = mediaItem.mediaMetadata.artist?.toString()?.trim().orEmpty()
+        val durationSec = mediaItem.metadata?.duration ?: 0
+        val wanted = title.lowercase()
+        return withContext(Dispatchers.IO) {
+            YouTube
+                .search("$title $artist".trim(), YouTube.SearchFilter.FILTER_SONG)
+                .getOrNull()
+                ?.items
+                ?.filterIsInstance<moe.rukamori.archivetune.innertube.models.SongItem>()
+                ?.firstOrNull { candidate ->
+                    val candidateTitle = candidate.title.lowercase()
+                    candidate.id != mediaId &&
+                        candidate.id.length == 11 &&
+                        (candidateTitle.contains(wanted) || wanted.contains(candidateTitle)) &&
+                        (durationSec <= 0 || candidate.duration == null || kotlin.math.abs(candidate.duration!! - durationSec) <= 15)
+                }
+        }
+    }
+
+    /** Swaps the queue entry at [index] for [alternate]; returns true if it was replaced. */
+    private fun swapQueueItem(
+        index: Int,
+        alternate: moe.rukamori.archivetune.innertube.models.SongItem,
+    ) {
+        if (index !in 0 until player.mediaItemCount) return
+        player.replaceMediaItem(index, alternate.toMediaItem())
+    }
+
+    private suspend fun tryPlayAlternateVersion(
+        mediaId: String,
+        snapshot: PlaybackRecoverySnapshot,
+    ): Boolean {
+        if (!alternateVersionTried.add(mediaId)) return false
+        val current = player.currentMediaItem ?: return false
+        val alternate = findAlternateVersion(current) ?: return false
+        if (player.currentMediaItem?.mediaId != mediaId) return false
+        Timber.tag("MusicService").i("Playing alternate version %s for %s", alternate.id, mediaId)
+        swapQueueItem(player.currentMediaItemIndex, alternate)
+        player.prepare()
+        if (snapshot.playWhenReady) player.play()
+        Toast.makeText(this, getString(R.string.playing_alternate_version, alternate.title), Toast.LENGTH_SHORT).show()
+        return true
     }
 
     private fun skipOnError() {
@@ -7818,6 +7877,10 @@ class MusicService :
                 )
                 if (preparePlaybackFromSnapshot(recoverySnapshot)) return
             }
+        }
+
+        if (!isLocalMedia && !isFullyDownloadedMedia && tryPlayAlternateVersion(currentMediaId, recoverySnapshot)) {
+            return
         }
 
         if (dataStore.get(AutoSkipNextOnErrorKey, false)) {

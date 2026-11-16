@@ -1156,4 +1156,6 @@
     <string name="recommendations_failed">Couldn\'t get recommendations — check your connection</string>
     <string name="recommendations_busy">Finding songs you\'ll like…</string>
     <string name="upcoming_song_unavailable">Coming up: \"%1$s\" couldn\'t be loaded and may not play</string>
+    <string name="playing_alternate_version">Couldn\'t stream that version, playing \"%1$s\" from another upload</string>
+    <string name="upcoming_song_swapped">Coming up: \"%1$s\" wouldn\'t load, so I switched to another version</string>
 </resources>
