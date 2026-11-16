@@ -25,7 +25,6 @@ import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.ANDROID
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.IOS
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.MWEB
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.TVHTML5
-import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.TVHTML5_DOWNGRADED
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.VISIONOS
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.WEB
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.WEB_CREATOR
@@ -133,7 +132,6 @@ object YTPlayerUtils {
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> =
         arrayOf(
             VISIONOS,
-            TVHTML5_DOWNGRADED,
             ANDROID_VR_1_65_10,
             WEB_REMIX,
             WEB,
@@ -468,33 +466,6 @@ object YTPlayerUtils {
         }
         return sessionId
     }
-
-    /**
-     * True if the signed-in stream route (WEB_CREATOR, tied to the account) was refused with a
-     * recoverable HTTP error for this video recently, so the next attempt should use the anonymous
-     * route instead.
-     */
-    fun isSignedInStreamRouteBlocked(videoId: String): Boolean {
-        val marker = ":$videoId:WEB_CREATOR@"
-        val now = System.currentTimeMillis()
-        return failedStreamClientsUntil.entries.any { (key, until) -> until > now && key.contains(marker) }
-    }
-
-    /** The same session without the account cookie or any account-bound tokens. */
-    fun anonymousPlaybackAuthState(authState: PlaybackAuthState): PlaybackAuthState =
-        authState
-            .copy(
-                cookie = null,
-                dataSyncId = null,
-                poToken = null,
-                poTokenGvs = null,
-                poTokenGvsSession = null,
-                poTokenGvsVideoId = null,
-                poTokenPlayer = null,
-                poTokenPlayerVideoId = null,
-                poTokenSubs = null,
-                poTokenSubsVideoId = null,
-            ).normalized()
 
     private fun PlaybackAuthState.withoutAccountBoundPlaybackState(): PlaybackAuthState =
         copy(

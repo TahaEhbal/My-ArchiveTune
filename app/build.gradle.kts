@@ -232,9 +232,11 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".debug"
             signingConfig = signingConfigs.getByName("debug")
-            isDebuggable = false
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // TEST BUILD: behaves like the original debug builds (no R8 shrinking, debuggable) to
+            // check whether the optimised build or our playback changes caused the stream errors.
+            isDebuggable = true
+            isMinifyEnabled = false
+            isShrinkResources = false
             matchingFallbacks += listOf("release")
         }
         create("nightly") {

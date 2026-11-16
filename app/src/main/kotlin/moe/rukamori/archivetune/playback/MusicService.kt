@@ -65,10 +65,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.cache.CacheWriter
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.currentCoroutineContext
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
@@ -1238,31 +1234,6 @@ class MusicService :
                 }
         sponsorBlockPlaybackController.attach(player, scope)
         playerInitialized.value = true
-        nextStreamPreloader.warmAudioBytes = ::warmUpcomingAudio
-        nextStreamPreloader.onUpcomingFailure = { mediaId, cause ->
-            Timber.tag("AudioStreamResolver").w(cause, "Upcoming song %s could not be preloaded", mediaId)
-            scope.launch(Dispatchers.Main) {
-                val index =
-                    (0 until player.mediaItemCount).firstOrNull { i ->
-                        val item = player.getMediaItemAt(i)
-                        (item.localConfiguration?.customCacheKey ?: item.mediaId).trim() == mediaId
-                    } ?: return@launch
-                if (index == player.currentMediaItemIndex) return@launch
-                val item = player.getMediaItemAt(index)
-                val title = item.mediaMetadata.title?.toString()?.takeIf(String::isNotBlank) ?: mediaId
-                val alternate = nextAlternateVersion(item)
-                if (alternate != null && index in 0 until player.mediaItemCount &&
-                    (player.getMediaItemAt(index).localConfiguration?.customCacheKey ?: player.getMediaItemAt(index).mediaId).trim() == mediaId
-                ) {
-                    swapQueueItem(index, alternate)
-                    Toast.makeText(this@MusicService, getString(R.string.upcoming_song_swapped, title), Toast.LENGTH_LONG).show()
-                } else {
-                    Toast
-                        .makeText(this@MusicService, getString(R.string.upcoming_song_unavailable, title), Toast.LENGTH_LONG)
-                        .show()
-                }
-            }
-        }
         observePlaybackPreloadConfiguration()
             .collect(scope) { configuration ->
                 playbackPreloadConfiguration = configuration
@@ -3644,118 +3615,6 @@ class MusicService :
 
     private fun waitOnNetworkError() {
         waitingForNetworkConnection.value = true
-    }
-
-    private val alternateCandidates = HashMap<String, ArrayDeque<moe.rukamori.archivetune.innertube.models.SongItem>>()
-    private val alternateRoot = HashMap<String, String>()
-    private val alternateSource = HashMap<String, Triple<String, String, Int>>()
-
-    private fun normalizeForMatch(text: String): String =
-        text
-            .lowercase()
-            .replace(Regex("\\(.*?\\)|\\[.*?]"), " ")
-            .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
-            .trim()
-
-    /**
-     * Returns the next other upload of the same song to try (album audio, lyric video, official
-     * video...). The first call searches YouTube and keeps a short ranked list; later calls hand
-     * out the remaining candidates one by one, so a bad upload leads to the next one.
-     */
-    private suspend fun nextAlternateVersion(mediaItem: MediaItem): moe.rukamori.archivetune.innertube.models.SongItem? {
-        val currentId = (mediaItem.localConfiguration?.customCacheKey ?: mediaItem.mediaId).trim()
-        val root = alternateRoot[currentId] ?: currentId
-        if (root !in alternateCandidates) {
-            val title = mediaItem.mediaMetadata.title?.toString()?.trim().orEmpty()
-            if (title.isEmpty()) return null
-            val artist = mediaItem.mediaMetadata.artist?.toString()?.trim().orEmpty()
-            val durationSec = mediaItem.metadata?.duration ?: 0
-            alternateSource[root] = Triple(title, artist, durationSec)
-            alternateCandidates[root] = ArrayDeque(searchAlternateVersions(root, title, artist, durationSec))
-        }
-        val queue = alternateCandidates[root] ?: return null
-        while (queue.isNotEmpty()) {
-            val candidate = queue.removeFirst()
-            if (candidate.id == currentId || candidate.id == root) continue
-            alternateRoot[candidate.id] = root
-            return candidate
-        }
-        return null
-    }
-
-    private suspend fun searchAlternateVersions(
-        originalId: String,
-        title: String,
-        artist: String,
-        durationSec: Int,
-    ): List<moe.rukamori.archivetune.innertube.models.SongItem> {
-        val wantedTitle = normalizeForMatch(title).ifEmpty { title.lowercase() }
-        val wantedArtist = normalizeForMatch(artist.substringBefore(',').substringBefore('&'))
-        val originalLower = title.lowercase()
-        val unwanted =
-            listOf("cover", "karaoke", "instrumental", "remix", "slowed", "sped up", "nightcore", "8d", "reverb", "live", "acoustic", "tutorial", "reaction", "mashup", "piano")
-                .filter { it !in originalLower }
-        val base = "$title $artist".trim()
-        val searches =
-            listOf(
-                YouTube.SearchFilter.FILTER_SONG to base,
-                YouTube.SearchFilter.FILTER_VIDEO to base,
-                YouTube.SearchFilter.FILTER_VIDEO to "$base lyrics",
-            )
-        val found =
-            coroutineScope {
-                searches
-                    .map { (filter, query) ->
-                        async(Dispatchers.IO) {
-                            YouTube
-                                .search(query, filter)
-                                .getOrNull()
-                                ?.items
-                                ?.filterIsInstance<moe.rukamori.archivetune.innertube.models.SongItem>()
-                                .orEmpty()
-                        }
-                    }.awaitAll()
-                    .flatten()
-            }.distinctBy { it.id }
-
-        return found
-            .filter { candidate ->
-                val candidateLower = candidate.title.lowercase()
-                val candidateTitle = normalizeForMatch(candidate.title).ifEmpty { candidateLower }
-                val artistNames = candidate.artists.joinToString(" ") { normalizeForMatch(it.name) }
-                candidate.id != originalId &&
-                    candidate.id.length == 11 &&
-                    candidateTitle.contains(wantedTitle) &&
-                    unwanted.none { it in candidateLower } &&
-                    (wantedArtist.isEmpty() || artistNames.contains(wantedArtist) || candidateTitle.contains(wantedArtist)) &&
-                    (durationSec <= 0 || candidate.duration == null || kotlin.math.abs((candidate.duration ?: 0) - durationSec) <= 25)
-            }.sortedBy { candidate ->
-                if (durationSec <= 0 || candidate.duration == null) 10 else kotlin.math.abs((candidate.duration ?: 0) - durationSec)
-            }.take(6)
-    }
-
-    /** Swaps the queue entry at [index] for [alternate]; returns true if it was replaced. */
-    private fun swapQueueItem(
-        index: Int,
-        alternate: moe.rukamori.archivetune.innertube.models.SongItem,
-    ) {
-        if (index !in 0 until player.mediaItemCount) return
-        player.replaceMediaItem(index, alternate.toMediaItem())
-    }
-
-    private suspend fun tryPlayAlternateVersion(
-        mediaId: String,
-        snapshot: PlaybackRecoverySnapshot,
-    ): Boolean {
-        val current = player.currentMediaItem ?: return false
-        val alternate = nextAlternateVersion(current) ?: return false
-        if (player.currentMediaItem?.mediaId != mediaId) return false
-        Timber.tag("MusicService").i("Playing alternate version %s for %s", alternate.id, mediaId)
-        swapQueueItem(player.currentMediaItemIndex, alternate)
-        player.prepare()
-        if (snapshot.playWhenReady) player.play()
-        Toast.makeText(this, getString(R.string.playing_alternate_version, alternate.title), Toast.LENGTH_SHORT).show()
-        return true
     }
 
     private fun skipOnError() {
@@ -7373,96 +7232,49 @@ class MusicService :
             return
         }
 
-        // Look a couple of songs ahead (following shuffle / repeat-all) so several are always ready.
-        val currentIndex = player.currentMediaItemIndex
-        val lookAheadRepeatMode =
-            if (player.repeatMode == Player.REPEAT_MODE_ALL) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_OFF
-        val upcomingIndices = mutableListOf<Int>()
-        var cursor = currentIndex
-        repeat(PRELOAD_LOOKAHEAD_SONGS) {
-            cursor = player.currentTimeline.getNextWindowIndex(cursor, lookAheadRepeatMode, player.shuffleModeEnabled)
-            if (cursor == C.INDEX_UNSET || cursor == currentIndex || cursor in upcomingIndices) return@repeat
-            if (cursor in 0 until player.mediaItemCount) upcomingIndices += cursor
-        }
-        if (upcomingIndices.isEmpty()) {
+        val nextMediaItemIndex = player.nextMediaItemIndex
+        if (nextMediaItemIndex == C.INDEX_UNSET ||
+            nextMediaItemIndex == player.currentMediaItemIndex ||
+            nextMediaItemIndex !in 0 until player.mediaItemCount
+        ) {
             nextStreamPreloader.cancel()
             return
         }
 
+        val nextMediaItem = player.getMediaItemAt(nextMediaItemIndex)
+        val nextMediaId =
+            (nextMediaItem.localConfiguration?.customCacheKey ?: nextMediaItem.mediaId)
+                .trim()
+                .takeIf(String::isNotEmpty)
         val currentMediaId =
             player.currentMediaItem
                 ?.let { mediaItem -> mediaItem.localConfiguration?.customCacheKey ?: mediaItem.mediaId }
                 ?.trim()
                 ?.takeIf(String::isNotEmpty)
-
-        val items =
-            upcomingIndices.mapNotNull { index ->
-                val mediaItem = player.getMediaItemAt(index)
-                val mediaId =
-                    (mediaItem.localConfiguration?.customCacheKey ?: mediaItem.mediaId)
-                        .trim()
-                        .takeIf(String::isNotEmpty)
-                val uri = mediaItem.localConfiguration?.uri
-                if (mediaId == null ||
-                    mediaId == currentMediaId ||
-                    mediaId.isLocalMediaId() ||
-                    uri == null ||
-                    uri.shouldBypassYouTubeResolver()
-                ) {
-                    null
-                } else {
-                    NextStreamPreloader.PreloadItem(
-                        request =
-                            AudioStreamRequest(
-                                mediaId = mediaId,
-                                playlistId = null,
-                                quality = configuration.quality,
-                                networkMetered = false,
-                                purpose = StreamPurpose.PLAYBACK,
-                                authState = configuration.authState,
-                                pinnedFormatId = null,
-                                moduleMetadata = mediaItem.metadata?.moduleMatchMetadata(),
-                            ),
-                        uri = uri,
-                    )
-                }
-            }
-
-        if (items.isEmpty()) {
+        val nextUri = nextMediaItem.localConfiguration?.uri
+        if (nextMediaId == null ||
+            nextMediaId == currentMediaId ||
+            nextMediaId.isLocalMediaId() ||
+            nextUri == null ||
+            nextUri.shouldBypassYouTubeResolver()
+        ) {
             nextStreamPreloader.cancel()
-        } else {
-            nextStreamPreloader.updateTargets(items)
+            return
         }
-    }
 
-    /**
-     * Downloads the first [PRELOAD_AUDIO_BYTES] of an upcoming song into the player cache, going
-     * through the same data source stack as real playback. Any failure (bad link, 403, offline)
-     * is thrown so the preloader can retry before the song is actually due.
-     */
-    private suspend fun warmUpcomingAudio(item: NextStreamPreloader.PreloadItem) {
-        if (isLowDataModeActive()) return
-        val uri = item.uri ?: return
-        val key = item.request.mediaId
-        if (key in cacheBypassMediaIds || uri.shouldBypassPlayerCache()) return
-        if (playerCache.isFullyCached(key) || downloadCache.isFullyCached(key)) return
-
-        val dataSpec =
-            DataSpec
-                .Builder()
-                .setUri(uri)
-                .setKey(key)
-                .setPosition(0L)
-                .setLength(PRELOAD_AUDIO_BYTES)
-                .build()
-        val cacheDataSource = createPlayerCacheDataSourceFactory(cacheWriteEnabled = true).createDataSource()
-        val writer = CacheWriter(cacheDataSource, dataSpec, null, null)
-        val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { writer.cancel() }
-        try {
-            withContext(Dispatchers.IO) { writer.cache() }
-        } finally {
-            cancelHandle?.dispose()
-        }
+        nextStreamPreloader.updateTarget(
+            request =
+                AudioStreamRequest(
+                    mediaId = nextMediaId,
+                    playlistId = null,
+                    quality = configuration.quality,
+                    networkMetered = false,
+                    purpose = StreamPurpose.PLAYBACK,
+                    authState = configuration.authState,
+                    pinnedFormatId = null,
+                    moduleMetadata = nextMediaItem.metadata?.moduleMatchMetadata(),
+                ),
+        )
     }
 
     override fun onEvents(
@@ -7936,10 +7748,6 @@ class MusicService :
                 )
                 if (preparePlaybackFromSnapshot(recoverySnapshot)) return
             }
-        }
-
-        if (!isLocalMedia && !isFullyDownloadedMedia && tryPlayAlternateVersion(currentMediaId, recoverySnapshot)) {
-            return
         }
 
         if (dataStore.get(AutoSkipNextOnErrorKey, false)) {
@@ -9162,8 +8970,6 @@ class MusicService :
         private const val PLAYBACK_FORMAT_ID_METADATA_KEY = "archivetune_playback_format_id"
         const val CHUNK_LENGTH = 8 * 1024 * 1024L
         val RETRYABLE_STREAM_RESPONSE_CODES = setOf(403, 404, 410, 416)
-        private const val PRELOAD_LOOKAHEAD_SONGS = 2
-        private const val PRELOAD_AUDIO_BYTES = 1_048_576L
         const val PERSISTENT_QUEUE_FILE = "persistent_queue.data"
         const val PERSISTENT_AUTOMIX_FILE = "persistent_automix.data"
         const val PERSISTENT_PLAYER_STATE_FILE = "persistent_player_state.data"

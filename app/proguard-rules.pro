@@ -148,8 +148,3 @@
 
 # engine HTTP Android/OkHttp Ktor
 -dontwarn kotlinx.coroutines.**
-
-# Methods called from JavaScript (BotGuard / PoToken WebView bridge) must keep their names.
--keepclassmembers class * {
-    @android.webkit.JavascriptInterface <methods>;
-}
