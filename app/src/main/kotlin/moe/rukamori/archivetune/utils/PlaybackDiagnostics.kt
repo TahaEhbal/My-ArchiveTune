@@ -23,21 +23,23 @@ object PlaybackDiagnostics : Timber.Tree() {
         message: String,
         t: Throwable?,
     ) {
-        if (priority < Log.INFO) return
         val tagName = tag.orEmpty()
+        if (priority < Log.INFO && !tagName.contains("Youtubei")) return
         val interesting =
             tagName.contains("YTPlayer") ||
                 tagName.contains("MusicService") ||
                 tagName.contains("AudioStream") ||
                 tagName.contains("PoToken") ||
                 tagName.contains("BotGuard") ||
-                tagName.contains("Stream")
+                tagName.contains("Stream") ||
+                tagName.contains("Youtubei")
         if (!interesting) return
         val level =
             when (priority) {
                 Log.ERROR -> "E"
                 Log.WARN -> "W"
-                else -> "I"
+                Log.INFO -> "I"
+                else -> "D"
             }
         val throwable = t?.let { " | ${it.javaClass.simpleName}: ${it.message.orEmpty()}" }.orEmpty()
         val line = "${clock.format(Date())} $level/$tagName: $message$throwable".take(MAX_LINE_LENGTH)

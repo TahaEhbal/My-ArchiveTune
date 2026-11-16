@@ -469,6 +469,33 @@ object YTPlayerUtils {
         return sessionId
     }
 
+    /**
+     * True if the signed-in stream route (WEB_CREATOR, tied to the account) was refused with a
+     * recoverable HTTP error for this video recently, so the next attempt should use the anonymous
+     * route instead.
+     */
+    fun isSignedInStreamRouteBlocked(videoId: String): Boolean {
+        val marker = ":$videoId:WEB_CREATOR@"
+        val now = System.currentTimeMillis()
+        return failedStreamClientsUntil.entries.any { (key, until) -> until > now && key.contains(marker) }
+    }
+
+    /** The same session without the account cookie or any account-bound tokens. */
+    fun anonymousPlaybackAuthState(authState: PlaybackAuthState): PlaybackAuthState =
+        authState
+            .copy(
+                cookie = null,
+                dataSyncId = null,
+                poToken = null,
+                poTokenGvs = null,
+                poTokenGvsSession = null,
+                poTokenGvsVideoId = null,
+                poTokenPlayer = null,
+                poTokenPlayerVideoId = null,
+                poTokenSubs = null,
+                poTokenSubsVideoId = null,
+            ).normalized()
+
     private fun PlaybackAuthState.withoutAccountBoundPlaybackState(): PlaybackAuthState =
         copy(
             dataSyncId = null,
