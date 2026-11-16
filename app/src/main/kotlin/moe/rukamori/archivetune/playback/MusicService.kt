@@ -66,6 +66,8 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.cache.CacheWriter
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.HttpDataSource
@@ -1248,8 +1250,7 @@ class MusicService :
                 if (index == player.currentMediaItemIndex) return@launch
                 val item = player.getMediaItemAt(index)
                 val title = item.mediaMetadata.title?.toString()?.takeIf(String::isNotBlank) ?: mediaId
-                val alternate =
-                    if (alternateVersionTried.add(mediaId)) findAlternateVersion(item) else null
+                val alternate = nextAlternateVersion(item)
                 if (alternate != null && index in 0 until player.mediaItemCount &&
                     (player.getMediaItemAt(index).localConfiguration?.customCacheKey ?: player.getMediaItemAt(index).mediaId).trim() == mediaId
                 ) {
@@ -3645,33 +3646,92 @@ class MusicService :
         waitingForNetworkConnection.value = true
     }
 
-    private val alternateVersionTried = HashSet<String>()
+    private val alternateCandidates = HashMap<String, ArrayDeque<moe.rukamori.archivetune.innertube.models.SongItem>>()
+    private val alternateRoot = HashMap<String, String>()
+    private val alternateSource = HashMap<String, Triple<String, String, Int>>()
+
+    private fun normalizeForMatch(text: String): String =
+        text
+            .lowercase()
+            .replace(Regex("\\(.*?\\)|\\[.*?]"), " ")
+            .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+            .trim()
 
     /**
-     * Finds another upload of the same song (e.g. the album audio instead of a music video that
-     * YouTube refuses to stream to us). Returns null if nothing close enough is found.
+     * Returns the next other upload of the same song to try (album audio, lyric video, official
+     * video...). The first call searches YouTube and keeps a short ranked list; later calls hand
+     * out the remaining candidates one by one, so a bad upload leads to the next one.
      */
-    private suspend fun findAlternateVersion(mediaItem: MediaItem): moe.rukamori.archivetune.innertube.models.SongItem? {
-        val mediaId = (mediaItem.localConfiguration?.customCacheKey ?: mediaItem.mediaId).trim()
-        val title = mediaItem.mediaMetadata.title?.toString()?.trim().orEmpty()
-        if (title.isEmpty()) return null
-        val artist = mediaItem.mediaMetadata.artist?.toString()?.trim().orEmpty()
-        val durationSec = mediaItem.metadata?.duration ?: 0
-        val wanted = title.lowercase()
-        return withContext(Dispatchers.IO) {
-            YouTube
-                .search("$title $artist".trim(), YouTube.SearchFilter.FILTER_SONG)
-                .getOrNull()
-                ?.items
-                ?.filterIsInstance<moe.rukamori.archivetune.innertube.models.SongItem>()
-                ?.firstOrNull { candidate ->
-                    val candidateTitle = candidate.title.lowercase()
-                    candidate.id != mediaId &&
-                        candidate.id.length == 11 &&
-                        (candidateTitle.contains(wanted) || wanted.contains(candidateTitle)) &&
-                        (durationSec <= 0 || candidate.duration == null || kotlin.math.abs(candidate.duration!! - durationSec) <= 15)
-                }
+    private suspend fun nextAlternateVersion(mediaItem: MediaItem): moe.rukamori.archivetune.innertube.models.SongItem? {
+        val currentId = (mediaItem.localConfiguration?.customCacheKey ?: mediaItem.mediaId).trim()
+        val root = alternateRoot[currentId] ?: currentId
+        if (root !in alternateCandidates) {
+            val title = mediaItem.mediaMetadata.title?.toString()?.trim().orEmpty()
+            if (title.isEmpty()) return null
+            val artist = mediaItem.mediaMetadata.artist?.toString()?.trim().orEmpty()
+            val durationSec = mediaItem.metadata?.duration ?: 0
+            alternateSource[root] = Triple(title, artist, durationSec)
+            alternateCandidates[root] = ArrayDeque(searchAlternateVersions(root, title, artist, durationSec))
         }
+        val queue = alternateCandidates[root] ?: return null
+        while (queue.isNotEmpty()) {
+            val candidate = queue.removeFirst()
+            if (candidate.id == currentId || candidate.id == root) continue
+            alternateRoot[candidate.id] = root
+            return candidate
+        }
+        return null
+    }
+
+    private suspend fun searchAlternateVersions(
+        originalId: String,
+        title: String,
+        artist: String,
+        durationSec: Int,
+    ): List<moe.rukamori.archivetune.innertube.models.SongItem> {
+        val wantedTitle = normalizeForMatch(title).ifEmpty { title.lowercase() }
+        val wantedArtist = normalizeForMatch(artist.substringBefore(',').substringBefore('&'))
+        val originalLower = title.lowercase()
+        val unwanted =
+            listOf("cover", "karaoke", "instrumental", "remix", "slowed", "sped up", "nightcore", "8d", "reverb", "live", "acoustic", "tutorial", "reaction", "mashup", "piano")
+                .filter { it !in originalLower }
+        val base = "$title $artist".trim()
+        val searches =
+            listOf(
+                YouTube.SearchFilter.FILTER_SONG to base,
+                YouTube.SearchFilter.FILTER_VIDEO to base,
+                YouTube.SearchFilter.FILTER_VIDEO to "$base lyrics",
+            )
+        val found =
+            coroutineScope {
+                searches
+                    .map { (filter, query) ->
+                        async(Dispatchers.IO) {
+                            YouTube
+                                .search(query, filter)
+                                .getOrNull()
+                                ?.items
+                                ?.filterIsInstance<moe.rukamori.archivetune.innertube.models.SongItem>()
+                                .orEmpty()
+                        }
+                    }.awaitAll()
+                    .flatten()
+            }.distinctBy { it.id }
+
+        return found
+            .filter { candidate ->
+                val candidateLower = candidate.title.lowercase()
+                val candidateTitle = normalizeForMatch(candidate.title).ifEmpty { candidateLower }
+                val artistNames = candidate.artists.joinToString(" ") { normalizeForMatch(it.name) }
+                candidate.id != originalId &&
+                    candidate.id.length == 11 &&
+                    candidateTitle.contains(wantedTitle) &&
+                    unwanted.none { it in candidateLower } &&
+                    (wantedArtist.isEmpty() || artistNames.contains(wantedArtist) || candidateTitle.contains(wantedArtist)) &&
+                    (durationSec <= 0 || candidate.duration == null || kotlin.math.abs((candidate.duration ?: 0) - durationSec) <= 25)
+            }.sortedBy { candidate ->
+                if (durationSec <= 0 || candidate.duration == null) 10 else kotlin.math.abs((candidate.duration ?: 0) - durationSec)
+            }.take(6)
     }
 
     /** Swaps the queue entry at [index] for [alternate]; returns true if it was replaced. */
@@ -3687,9 +3747,8 @@ class MusicService :
         mediaId: String,
         snapshot: PlaybackRecoverySnapshot,
     ): Boolean {
-        if (!alternateVersionTried.add(mediaId)) return false
         val current = player.currentMediaItem ?: return false
-        val alternate = findAlternateVersion(current) ?: return false
+        val alternate = nextAlternateVersion(current) ?: return false
         if (player.currentMediaItem?.mediaId != mediaId) return false
         Timber.tag("MusicService").i("Playing alternate version %s for %s", alternate.id, mediaId)
         swapQueueItem(player.currentMediaItemIndex, alternate)
