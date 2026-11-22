@@ -106,8 +106,8 @@ function playFromList(i) {
   playCurrent();
 }
 
-async function urlFor(song) {
-  const r = await window.api.stream(song.id);
+async function urlFor(song, prio = 'user') {
+  const r = await window.api.stream(song.id, prio);
   if (!r.ok) throw new Error(r.error);
   return r.data;
 }
@@ -162,8 +162,11 @@ function showError(text) {
 
 // Resolve the next two links in the background so transitions are instant and bad songs show up early.
 async function preloadAhead() {
-  for (const song of state.queue.slice(state.index + 1, state.index + 3)) {
-    try { await urlFor(song); } catch { state.failed.add(song.id); }
+  for (const song of state.queue.slice(state.index + 1, state.index + 4)) {
+    try { await urlFor(song, 'preload'); } catch (e) {
+      if (String(e.message) === 'cancelled') return; // the user picked something else; stop preloading
+      state.failed.add(song.id);
+    }
   }
 }
 
@@ -244,5 +247,6 @@ window.api.onUpdate((m) => {
   else if (m.state === 'uptodate') box.textContent = 'Up to date';
   else if (m.state === 'error') box.textContent = `Update check failed: ${String(m.message).slice(0, 80)}`;
 });
+window.api.onProgress((m) => { if (m.id === state.queue[state.index]?.id && audio.paused) setStatus(`Downloading song… ${m.pct}%`); });
 refreshAccount();
 show('recommended');

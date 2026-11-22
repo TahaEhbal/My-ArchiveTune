@@ -296,21 +296,42 @@ function trimCache() {
   } catch { /* ignore */ }
 }
 
-function runYtDlp(videoId, useCookies) {
+const procs = new Map(); // id -> { child, prio }
+
+function cancelPreloads(exceptId) {
+  for (const [id, j] of procs) {
+    if (id !== exceptId && j.prio === 'preload') { j.cancelled = true; j.child.kill(); }
+  }
+}
+
+function runYtDlp(videoId, useCookies, prio) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(cacheDir(), { recursive: true });
     // yt-dlp needs a JavaScript engine to solve YouTube's checks. Use this app's own (Electron
     // behaves like Node when ELECTRON_RUN_AS_NODE is set), so nothing extra has to be installed.
-    const args = ['-f', 'bestaudio[ext=m4a]/bestaudio/best', '--no-playlist', '--no-warnings', '--no-progress',
+    const args = ['-f', 'bestaudio[ext=m4a]/bestaudio/best', '--no-playlist', '--no-warnings', '--newline',
       '--no-part', '-o', path.join(cacheDir(), `${videoId}.%(ext)s`),
       '--js-runtimes', `node:${process.execPath}`];
     if (useCookies && fs.existsSync(cookieTxtPath()) && signedIn()) args.push('--cookies', cookieTxtPath());
     args.push(`https://music.youtube.com/watch?v=${videoId}`);
-    const p = spawn(ytDlpPath(), args, { windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+    const child = spawn(ytDlpPath(), args, { windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+    const job = { child, prio, cancelled: false };
+    procs.set(videoId, job);
     let err = '';
-    p.stderr.on('data', (d) => (err += d));
-    p.on('error', (e) => reject(new Error(`Could not start yt-dlp: ${e.message}`)));
-    p.on('close', (code) => {
+    child.stdout.on('data', (d) => {
+      if (job.prio !== 'user') return;
+      const m = /\[download\]\s+([\d.]+)%/.exec(String(d));
+      if (m) mainWindow?.webContents.send('progress', { id: videoId, pct: Math.round(Number(m[1])) });
+    });
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', (e) => { procs.delete(videoId); reject(new Error(`Could not start yt-dlp: ${e.message}`)); });
+    child.on('close', (code) => {
+      procs.delete(videoId);
+      if (job.cancelled) {
+        const f = cachedFile(videoId);
+        if (f) fs.rmSync(f, { force: true });
+        return reject(new Error('cancelled'));
+      }
       const file = cachedFile(videoId);
       if (code === 0 && file) resolve(file);
       else reject(new Error(err.trim().split('\n').filter(Boolean).slice(-2).join(' ') || `yt-dlp exited with ${code}`));
@@ -318,16 +339,23 @@ function runYtDlp(videoId, useCookies) {
   });
 }
 
-function resolveStream(videoId) {
+function resolveStream(videoId, prio = 'user') {
   const existing = cachedFile(videoId);
-  if (existing) { try { fs.utimesSync(existing, new Date(), new Date()); } catch { /* ignore */ } return Promise.resolve(pathToFileURL(existing).href); }
+  if (existing && !procs.has(videoId)) { try { fs.utimesSync(existing, new Date(), new Date()); } catch { /* ignore */ } return Promise.resolve(pathToFileURL(existing).href); }
+  if (prio === 'user') {
+    // A song the user asked for gets all the bandwidth: pause background preloading.
+    cancelPreloads(videoId);
+    const running = procs.get(videoId);
+    if (running) running.prio = 'user';
+  }
   if (inflight.has(videoId)) return inflight.get(videoId);
   const job = (async () => {
     let file;
     try {
-      file = await runYtDlp(videoId, false);
+      file = await runYtDlp(videoId, false, prio);
     } catch (first) {
-      try { file = await runYtDlp(videoId, true); } catch { throw new Error(String(first.message).slice(0, 300)); }
+      if (first.message === 'cancelled') throw first;
+      try { file = await runYtDlp(videoId, true, prio); } catch { throw new Error(String(first.message).slice(0, 300)); }
     }
     trimCache();
     return pathToFileURL(file).href;
@@ -420,7 +448,7 @@ ipcMain.handle('yt:search', wrap(search));
 ipcMain.handle('yt:library', wrap(library));
 ipcMain.handle('yt:playlist', wrap(playlistSongs));
 ipcMain.handle('yt:recommended', wrap(recommended));
-ipcMain.handle('yt:stream', wrap(resolveStream));
+ipcMain.handle('yt:stream', wrap((id, prio) => resolveStream(id, prio)));
 ipcMain.handle('app:version', wrap(async () => currentVersion()));
 ipcMain.handle('app:restart', async () => {
   const exe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
