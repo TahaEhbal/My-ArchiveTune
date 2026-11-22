@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const audio = $('audio');
 let failStreak = 0;
+let pickedByUser = false;
 const state = { view: 'search', songs: [], queue: [], index: -1, history: [], failed: new Set() };
 
 const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -100,6 +101,8 @@ function playFromList(i) {
   state.queue = [picked, ...shuffle(state.songs.filter((_, j) => j !== i))];
   state.index = 0;
   state.history = [];
+  pickedByUser = true;
+  failStreak = 0;
   playCurrent();
 }
 
@@ -121,6 +124,7 @@ async function playCurrent() {
     audio.src = await urlFor(song);
     await audio.play();
     failStreak = 0;
+    pickedByUser = false;
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({ title: song.title, artist: song.artist, artwork: song.thumbnail ? [{ src: song.thumbnail }] : [] });
     }
@@ -129,6 +133,11 @@ async function playCurrent() {
     state.failed.add(song.id);
     failStreak++;
     const why = String(e.message || e).slice(0, 400);
+    if (pickedByUser) {
+      pickedByUser = false;
+      showError(`"${song.title}" couldn't be played: ${why}`);
+      return;
+    }
     if (failStreak >= 3) {
       showError(`Stopped after ${failStreak} songs in a row failed. Last error for "${song.title}": ${why}`);
       return;
@@ -192,6 +201,11 @@ audio.addEventListener('error', () => {
   if (!song || !audio.src) return;
   state.failed.add(song.id);
   failStreak++;
+  if (pickedByUser) {
+    pickedByUser = false;
+    const c = audio.error ? `media error ${audio.error.code}${audio.error.message ? ': ' + audio.error.message : ''}` : 'unknown audio error';
+    return showError(`"${song.title}" was found but the audio would not load (${c}).`);
+  }
   const code = audio.error ? `media error ${audio.error.code}${audio.error.message ? ': ' + audio.error.message : ''}` : 'unknown audio error';
   if (failStreak >= 3) return showError(`Stopped after ${failStreak} songs failed to play. The link was found but the audio would not load (${code}). Last: "${song.title}"`);
   setStatus(`Couldn't play "${song.title}" (${code}). Skipping.`);
