@@ -21,8 +21,24 @@
   "build": {
     "appId": "com.taha.archivetune.desktop",
     "productName": "ArchiveTune Desktop",
-    "files": ["main.js", "preload.js", "renderer/**/*"],
-    "extraResources": [{ "from": "bin/yt-dlp.exe", "to": "yt-dlp.exe" }],
-    "win": { "target": ["portable"], "artifactName": "ArchiveTune-Desktop-${version}.exe" }
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "bin/yt-dlp.exe",
+        "to": "yt-dlp.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "artifactName": "ArchiveTune-Desktop-${version}.exe",
+      "icon": "build/icon.ico"
+    }
   }
 }

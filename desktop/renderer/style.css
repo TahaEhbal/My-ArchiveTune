@@ -1,4 +1,4 @@
-:root { --bg:#000; --panel:#0b0b0b; --line:#1c1c1c; --text:#f2f2f2; --dim:#8a8a8a; --accent:#b388ff; }
+:root { --bg:#000; --panel:#0b0b0b; --line:#1c1c1c; --text:#f2f2f2; --dim:#b0b0b0; --accent:#b388ff; }
 * { box-sizing: border-box; }
 html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:14px/1.4 "Segoe UI", system-ui, sans-serif; }
 body { display:grid; grid-template-columns:230px 1fr; grid-template-rows:1fr 88px; grid-template-areas:"side main" "player player"; }

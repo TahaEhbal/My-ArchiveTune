@@ -72,7 +72,7 @@ async function getYt() {
 async function loginFlow() {
   const ses = session.fromPartition('persist:login');
   const win = new BrowserWindow({
-    width: 520, height: 720, parent: mainWindow, modal: true, backgroundColor: '#000000',
+    width: 520, height: 720, parent: mainWindow, modal: true, title: 'Sign in to Google', backgroundColor: '#000000',
     webPreferences: { session: ses },
   });
   win.setMenuBarVisibility(false);
@@ -89,12 +89,20 @@ async function loginFlow() {
       yt = null;
       resolve(signedIn());
     };
-    win.webContents.on('did-navigate', async (_e, url) => {
-      if (url.startsWith('https://music.youtube.com')) {
-        await finish();
-        win.close();
-      }
-    });
+    let done = false;
+    const check = async () => {
+      if (done) return;
+      const url = win.webContents.getURL();
+      if (!url.startsWith('https://music.youtube.com') && !url.startsWith('https://www.youtube.com')) return;
+      const all = await ses.cookies.get({ domain: 'youtube.com' });
+      if (!all.some((c) => c.name === 'SAPISID' || c.name === '__Secure-3PAPISID')) return;
+      done = true;
+      await finish();
+      win.close();
+    };
+    win.webContents.on('did-navigate', check);
+    win.webContents.on('did-navigate-in-page', check);
+    win.webContents.on('did-finish-load', check);
     win.on('closed', () => resolve(signedIn()));
   });
 }
@@ -110,12 +118,24 @@ async function search(q) {
 async function library() {
   const y = await getYt();
   if (!signedIn()) return [];
-  const lib = await y.music.getLibrary();
-  const playlists = await lib.getPlaylists?.().catch?.(() => null);
-  const items = playlists?.contents ?? lib.contents ?? [];
-  return items
-    .map((p) => ({ id: p.id || p.playlist_id, title: text(p.title), count: text(p.item_count) }))
-    .filter((p) => p.id);
+  const found = new Map();
+  const add = (p) => {
+    const id = p?.id || p?.playlist_id;
+    const title = text(p?.title).trim();
+    if (id && title && !found.has(id)) found.set(id, { id, title, count: text(p.item_count ?? p.video_count ?? p.subtitle) });
+  };
+  const errors = [];
+  try {
+    const feed = await y.getPlaylists();
+    (feed.playlists ?? feed.contents ?? []).forEach(add);
+  } catch (e) { errors.push(String(e.message || e)); }
+  try {
+    const lib = await y.music.getLibrary();
+    const pl = await lib.getPlaylists?.();
+    (pl?.contents ?? pl?.playlists ?? lib.playlists ?? []).forEach(add);
+  } catch (e) { errors.push(String(e.message || e)); }
+  if (!found.size && errors.length) throw new Error(errors.join(' | '));
+  return [...found.values()];
 }
 
 async function playlistSongs(id) {
@@ -136,7 +156,10 @@ async function recommended() {
   const y = await getYt();
   const lists = await library();
   const src = lists.find((p) => p.title.trim().toLowerCase() === SOURCE_PLAYLIST_NAME);
-  if (!src) return { songs: [], error: `No playlist called "${SOURCE_PLAYLIST_NAME}" found in your library.` };
+  if (!src) {
+    const names = lists.slice(0, 12).map((p) => p.title).join(', ');
+    return { songs: [], error: `No playlist called "${SOURCE_PLAYLIST_NAME}" found. ${lists.length ? `Playlists I can see: ${names}` : 'I can see no playlists, so sign-in may not have worked.'}` };
+  }
   const mine = await playlistSongs(src.id);
   const mineIds = new Set(mine.map((s) => s.id));
   const artistCount = {};
@@ -204,7 +227,7 @@ function resolveStream(videoId) {
 function createWindow() {
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
-    width: 1180, height: 760, minWidth: 820, minHeight: 560, backgroundColor: '#000000', title: 'ArchiveTune',
+    width: 1180, height: 760, minWidth: 820, minHeight: 560, backgroundColor: '#000000', title: 'ArchiveTune', icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
   });
   // Googlevideo wants a browser-like Referer/Origin on media requests.

@@ -88,8 +88,8 @@ async function refreshAccount() {
   const r = await window.api.authStatus();
   const on = r.ok && r.data.signedIn;
   $('account').innerHTML = on ? '<button id="out">Sign out</button>' : '<button id="in">Sign in with Google</button>';
-  if (on) $('out').onclick = async () => { await window.api.logout(); refreshAccount(); };
-  else $('in').onclick = async () => { await window.api.login(); refreshAccount(); };
+  if (on) $('out').onclick = async () => { await window.api.logout(); await refreshAccount(); show('recommended'); };
+  else $('in').onclick = async () => { setStatus('Signing in…'); await window.api.login(); await refreshAccount(); show(state.view === 'search' ? 'recommended' : state.view); };
 }
 
 // ---------- playback (permanent shuffle) ----------
