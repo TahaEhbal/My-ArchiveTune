@@ -11,8 +11,15 @@
     <h1>ArchiveTune</h1>
     <input id="q" type="search" placeholder="Search songs…" />
     <nav>
+      <button data-view="home" class="nav">Home</button>
+      <button data-view="explore" class="nav">Explore</button>
+      <button data-view="charts" class="nav">Charts</button>
+      <button data-view="newreleases" class="nav">New releases</button>
+      <button data-view="moods" class="nav">Moods &amp; genres</button>
       <button data-view="recommended" class="nav">Recommended for you</button>
       <button data-view="library" class="nav">Library</button>
+      <button data-view="liked" class="nav">Liked songs</button>
+      <button data-view="history" class="nav">History</button>
       <button data-view="queue" class="nav">Queue</button>
     </nav>
     <div id="account"></div>
@@ -20,7 +27,7 @@
     <div class="credit">Made by Taha <span id="ver"></span></div>
   </aside>
   <main>
-    <header><h2 id="title">Search</h2><span id="status"></span></header>
+    <header><button id="back" hidden title="Back">←</button><h2 id="title">Search</h2><span id="status"></span></header>
     <div id="list"></div>
   </main>
   <footer id="player">

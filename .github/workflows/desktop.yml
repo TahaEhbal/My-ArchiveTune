@@ -57,7 +57,7 @@ jobs:
         run: |
           v="0.1.${{ github.run_number }}"
           mkdir stage
-          cp app-main.js preload.js package.json stage/
+          cp app-main.js parse.js preload.js package.json stage/
           cp -r renderer assets stage/
           (cd stage && npm install --omit=dev --no-audit --no-fund && node -e "import('youtubei.js').then(()=>console.log('stage import ok'))" && echo "$v" > version.txt)
           powershell -NoProfile -Command "Compress-Archive -Path stage/* -DestinationPath code-$v.zip"

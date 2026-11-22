@@ -8,7 +8,7 @@
   "license": "GPL-3.0",
   "scripts": {
     "start": "electron .",
-    "check": "node --check main.js && node --check app-main.js && node --check preload.js && node --check renderer/app.js",
+    "check": "node --check main.js && node --check app-main.js && node --check parse.js && node --check preload.js && node --check renderer/app.js",
     "dist": "electron-builder --win portable --publish never"
   },
   "dependencies": {
@@ -24,6 +24,7 @@
     "files": [
       "main.js",
       "app-main.js",
+      "parse.js",
       "preload.js",
       "renderer/**/*",
       "assets/icon.png"

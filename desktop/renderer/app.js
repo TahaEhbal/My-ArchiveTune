@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const audio = $('audio');
 let failStreak = 0;
 let pickedByUser = false;
-const state = { view: 'search', songs: [], queue: [], index: -1, history: [], failed: new Set() };
+const state = { view: '', songs: [], queue: [], index: -1, history: [], failed: new Set() };
 
 const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -15,73 +15,128 @@ function shuffle(arr) {
 }
 
 // ---------- rendering ----------
-function renderSongs(songs, title) {
-  state.songs = songs;
-  $('title').textContent = title;
-  const list = $('list');
-  if (!songs.length) { list.innerHTML = '<div class="msg">Nothing here yet.</div>'; return; }
-  const cur = state.queue[state.index]?.id;
-  list.innerHTML = songs.map((s, i) => `
-    <div class="row${s.id === cur ? ' playing' : ''}" data-i="${i}">
+state.sections = [];
+const KIND_LABEL = { album: 'Album', artist: 'Artist', playlist: 'Playlist', mood: '', page: '' };
+
+function rowHtml(s, si, i, cur) {
+  return `<div class="row${s.id === cur ? ' playing' : ''}" data-s="${si}" data-i="${i}">
       <img loading="lazy" src="${esc(s.thumbnail)}" alt="" />
       <div><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div>
       <div class="d">${s.duration ? fmt(s.duration) : ''}</div>
-    </div>`).join('');
+    </div>`;
 }
-$('list').addEventListener('click', (e) => {
-  const row = e.target.closest('.row');
-  if (row) return playFromList(Number(row.dataset.i));
-  const pl = e.target.closest('.pl');
-  if (pl) openPlaylist(pl.dataset.id, pl.dataset.title);
-});
-
+function cardHtml(c, si, i) {
+  return `<div class="card" data-s="${si}" data-i="${i}">
+      ${c.thumbnail ? `<img loading="lazy" src="${esc(c.thumbnail)}" alt="" class="${c.kind === 'artist' ? 'round' : ''}" />` : '<div class="ph"></div>'}
+      <div class="ct">${esc(c.title)}</div><div class="a">${esc(c.artist || KIND_LABEL[c.kind] || '')}</div>
+    </div>`;
+}
+function renderPage(title, page) {
+  state.sections = page.sections || [];
+  $('title').textContent = title;
+  const cur = state.queue[state.index]?.id;
+  let html = '';
+  if (page.header?.title) {
+    html += `<div class="phead">${page.header.thumbnail ? `<img src="${esc(page.header.thumbnail)}" alt="" />` : ''}<div><div class="pt">${esc(page.header.title)}</div><div class="a">${esc(page.header.subtitle || '')}</div></div></div>`;
+  }
+  state.sections.forEach((sec, si) => {
+    const items = sec.items.map((it) => ({ ...it, kind: it.kind || 'song' }));
+    sec.items = items;
+    const songs = items.filter((x) => x.kind === 'song');
+    html += `<h3 class="sec">${esc(sec.title)}</h3>`;
+    if (songs.length === items.length) html += items.map((s, i) => rowHtml(s, si, i, cur)).join('');
+    else html += `<div class="cards">${items.map((c, i) => (c.kind === 'song' ? rowHtml(c, si, i, cur) : cardHtml(c, si, i))).join('')}</div>`;
+  });
+  $('list').innerHTML = html || '<div class="msg">Nothing here yet.</div>';
+}
 function showMessage(title, msg) { $('title').textContent = title; $('list').innerHTML = `<div class="msg">${esc(msg)}</div>`; }
 
-// ---------- views ----------
-async function show(view) {
-  state.view = view;
-  document.querySelectorAll('.nav').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+// ---------- navigation ----------
+const nav = { stack: [], current: null };
+async function openPage(desc, push = true) {
+  if (push && nav.current) nav.stack.push(nav.current);
+  nav.current = desc;
+  $('back').hidden = nav.stack.length === 0;
+  setStatus(desc.loading || 'Loading…');
+  showMessage(desc.title, desc.loading || 'Loading…');
+  let page;
+  try { page = await desc.load(); } catch (e) { page = { error: String(e.message || e) }; }
+  if (nav.current !== desc) return; // user went somewhere else meanwhile
   setStatus('');
-  if (view === 'queue') {
-    renderSongs(state.queue.slice(Math.max(0, state.index)), 'Queue (always shuffled)');
-  } else if (view === 'library') {
-    setStatus('Loading…');
-    const r = await window.api.library();
-    setStatus('');
-    if (!r.ok) return showMessage('Library', r.error);
-    if (!r.data.length) return showMessage('Library', 'No playlists found. Sign in (bottom left) to see your playlists.');
-    $('title').textContent = 'Library';
-    $('list').innerHTML = r.data.map((p) => `<div class="pl" data-id="${esc(p.id)}" data-title="${esc(p.title)}"><b>${esc(p.title)}</b> <span class="a">${esc(p.count)}</span></div>`).join('');
-  } else if (view === 'recommended') {
-    setStatus('Finding songs you\'ll like…');
-    showMessage('Recommended for you', 'Building your list from "the main playlist"…');
-    const r = await window.api.recommended();
-    setStatus('');
-    if (!r.ok) return showMessage('Recommended for you', r.error);
-    if (r.data.error) return showMessage('Recommended for you', r.data.error);
-    renderSongs(r.data.songs, `Recommended for you (${r.data.songs.length})`);
-  }
+  if (page.error) return showMessage(desc.title, page.error);
+  renderPage(page.title || desc.title, page);
 }
-async function openPlaylist(id, title) {
-  setStatus('Loading…');
-  const r = await window.api.playlist(id);
-  setStatus('');
-  if (!r.ok) return showMessage(title, r.error);
-  renderSongs(r.data, title);
+function openRoot(desc, viewName) {
+  nav.stack = [];
+  nav.current = null;
+  state.view = viewName || '';
+  document.querySelectorAll('.nav').forEach((b) => b.classList.toggle('active', b.dataset.view === viewName));
+  return openPage(desc, false);
 }
+$('back').onclick = () => {
+  const prev = nav.stack.pop();
+  if (prev) openPage(prev, false);
+};
+
+const unwrap = async (p) => { const r = await p; if (!r.ok) throw new Error(r.error); return r.data; };
+const browseDesc = (title, id, params) => ({ title, load: async () => unwrap(window.api.browse(id, params)) });
+const playlistDesc = (title, id) => ({
+  title,
+  load: async () => ({ sections: [{ title: '', items: await unwrap(window.api.playlist(id)) }] }),
+});
+
+const VIEWS = {
+  home: () => browseDesc('Home', 'FEmusic_home'),
+  explore: () => browseDesc('Explore', 'FEmusic_explore'),
+  charts: () => browseDesc('Charts', 'FEmusic_charts'),
+  newreleases: () => browseDesc('New releases', 'FEmusic_new_releases_albums'),
+  moods: () => browseDesc('Moods & genres', 'FEmusic_moods_and_genres'),
+  history: () => browseDesc('History', 'FEmusic_history'),
+  liked: () => playlistDesc('Liked songs', 'LM'),
+  queue: () => ({ title: 'Queue (always shuffled)', load: async () => ({ sections: [{ title: '', items: state.queue.slice(Math.max(0, state.index)) }] }) }),
+  library: () => ({
+    title: 'Library',
+    load: async () => {
+      const lists = await unwrap(window.api.library());
+      if (!lists.length) return { error: 'No playlists found. Sign in (bottom left) to see your playlists.' };
+      return { sections: [{ title: 'Playlists', items: lists.map((p) => ({ kind: 'playlist', id: p.id, title: p.title, artist: p.count, thumbnail: '' })) }] };
+    },
+  }),
+  recommended: () => ({
+    title: 'Recommended for you',
+    loading: 'Building your list from "the main playlist"…',
+    load: async () => {
+      const d = await unwrap(window.api.recommended());
+      if (d.error) return { error: d.error };
+      return { title: `Recommended for you (${d.songs.length})`, sections: [{ title: '', items: d.songs }] };
+    },
+  }),
+};
+function show(view) { return openRoot(VIEWS[view](), view); }
 document.querySelectorAll('.nav').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
+
+$('list').addEventListener('click', (e) => {
+  const el = e.target.closest('.row, .card');
+  if (!el) return;
+  const sec = state.sections[Number(el.dataset.s)];
+  const item = sec?.items[Number(el.dataset.i)];
+  if (!item) return;
+  if (item.kind === 'song') return playFromList(sec.items.filter((x) => x.kind === 'song'), item.id);
+  if (item.kind === 'playlist') return openPage(playlistDesc(item.title, item.id));
+  openPage(browseDesc(item.title, item.id, item.params));
+});
 
 let searchTimer;
 $('q').addEventListener('input', () => {
   clearTimeout(searchTimer);
   const q = $('q').value.trim();
   if (!q) return;
-  searchTimer = setTimeout(async () => {
-    document.querySelectorAll('.nav').forEach((b) => b.classList.remove('active'));
-    setStatus('Searching…');
-    const r = await window.api.search(q);
-    setStatus('');
-    r.ok ? renderSongs(r.data, `Results for "${q}"`) : showMessage('Search', r.error);
+  searchTimer = setTimeout(() => {
+    openRoot({
+      title: `Results for "${q}"`,
+      loading: 'Searching…',
+      load: async () => ({ sections: [{ title: '', items: await unwrap(window.api.search(q)) }] }),
+    }, '');
   }, 350);
 });
 
@@ -90,15 +145,15 @@ async function refreshAccount() {
   const r = await window.api.authStatus();
   const on = r.ok && r.data.signedIn;
   $('account').innerHTML = on ? '<button id="out">Sign out</button>' : '<button id="in">Sign in with Google</button>';
-  if (on) $('out').onclick = async () => { await window.api.logout(); await refreshAccount(); show('recommended'); };
-  else $('in').onclick = async () => { setStatus('Signing in…'); await window.api.login(); await refreshAccount(); show(state.view === 'search' ? 'recommended' : state.view); };
+  if (on) $('out').onclick = async () => { await window.api.logout(); await refreshAccount(); show('home'); };
+  else $('in').onclick = async () => { setStatus('Signing in…'); await window.api.login(); await refreshAccount(); show(state.view || 'home'); };
 }
 
 // ---------- playback (permanent shuffle) ----------
-function playFromList(i) {
+function playFromList(songs, pickedId) {
   // Whatever you click, the rest of the list is shuffled behind it. The song you picked plays first.
-  const picked = state.songs[i];
-  state.queue = [picked, ...shuffle(state.songs.filter((_, j) => j !== i))];
+  const picked = songs.find((s) => s.id === pickedId);
+  state.queue = [picked, ...shuffle(songs.filter((s) => s.id !== pickedId))];
   state.index = 0;
   state.history = [];
   pickedByUser = true;
@@ -191,7 +246,7 @@ function prev() {
 }
 function highlight() {
   const cur = state.queue[state.index]?.id;
-  document.querySelectorAll('.row').forEach((r) => r.classList.toggle('playing', state.songs[Number(r.dataset.i)]?.id === cur));
+  document.querySelectorAll('.row').forEach((r) => r.classList.toggle('playing', state.sections[Number(r.dataset.s)]?.items[Number(r.dataset.i)]?.id === cur));
 }
 
 // ---------- controls ----------
@@ -249,4 +304,4 @@ window.api.onUpdate((m) => {
 });
 window.api.onProgress((m) => { if (m.id === state.queue[state.index]?.id && audio.paused) setStatus(`Downloading song… ${m.pct}%`); });
 refreshAccount();
-show('recommended');
+show('home');

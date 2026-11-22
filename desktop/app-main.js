@@ -5,6 +5,7 @@ const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 
 const REPO = 'TahaEhbal/My-ArchiveTune';
+const { parseBrowse, findContinuation: findCont } = require('./parse');
 
 const SOURCE_PLAYLIST_NAME = 'the main playlist';
 const COOKIE_DOMAINS = ['.youtube.com', 'youtube.com', '.google.com', 'accounts.google.com', 'music.youtube.com'];
@@ -443,6 +444,19 @@ ipcMain.handle('auth:logout', wrap(async () => {
   await session.fromPartition('persist:login').clearStorageData();
   cookieHeader = ''; yt = null;
   return { signedIn: false };
+}));
+ipcMain.handle('yt:browse', wrap(async (id, params) => {
+  let data = await rawBrowse({ browseId: id, ...(params ? { params } : {}) });
+  const page = parseBrowse(data);
+  // The home feed loads more shelves as you scroll; fetch a few extra pages up front.
+  for (let i = 0; i < 3 && id === 'FEmusic_home'; i++) {
+    const tok = findCont(data);
+    if (!tok) break;
+    data = await rawBrowse({ continuation: tok }).catch(() => null);
+    if (!data) break;
+    page.sections.push(...parseBrowse(data).sections);
+  }
+  return page;
 }));
 ipcMain.handle('yt:search', wrap(search));
 ipcMain.handle('yt:library', wrap(library));
