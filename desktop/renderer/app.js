@@ -17,25 +17,38 @@ function shuffle(arr) {
 // ---------- rendering ----------
 state.sections = [];
 const downloaded = new Set();
-const refreshDownloaded = async () => { const r = await window.api.dlIds(); if (r.ok) { downloaded.clear(); r.data.forEach((x) => downloaded.add(x)); } };
+const refreshDownloaded = async () => { const r = await window.api.dlIds(); if (r.ok) { downloaded.clear(); r.data.forEach((x) => downloaded.add(x)); } updateTiles(); };
+function setTile(id, url) {
+  const t = $(id);
+  if (!t) return;
+  const icon = id === 'tile-dl' ? 'download' : 'queue';
+  t.innerHTML = url ? `<img src="${esc(url)}" alt="" />` : ic(icon);
+}
+async function updateTiles() {
+  const d = await window.api.dlList();
+  const first = d.ok ? (d.data.downloaded[0] || d.data.cached[0]) : null;
+  setTile('tile-dl', first?.thumbnail);
+  setTile('tile-q', state.queue[Math.max(0, state.index)]?.thumbnail);
+}
 const KIND_LABEL = { album: 'Album', artist: 'Artist', playlist: 'Playlist', mood: '', page: '' };
 
 const ic = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
 function rowHtml(s, si, i, cur) {
   return `<div class="row${s.id === cur ? ' playing' : ''}" data-s="${si}" data-i="${i}">
       <div class="n"><span>${i + 1}</span>${ic('play')}</div>
-      <div class="m"><img loading="lazy" src="${esc(s.thumbnail)}" alt="" /><div style="min-width:0"><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div></div>
+      <div class="m">${s.thumbnail ? `<img loading="lazy" src="${esc(s.thumbnail)}" alt="" />` : phHtml(s.title, 'note')}<div style="min-width:0"><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div></div>
       <div class="d">${downloaded.has(s.id) ? `<span class="dlmark" title="Downloaded">${ic('check')}</span>` : ''}${s.duration ? fmt(s.duration) : ''}</div>
     </div>`;
 }
 function cardHtml(c, si, i) {
   const playable = c.kind === 'album' || c.kind === 'playlist';
   return `<div class="card-i" data-s="${si}" data-i="${i}">
-      <div class="cimg">${c.thumbnail ? `<img loading="lazy" src="${esc(c.thumbnail)}" alt="" class="${c.kind === 'artist' ? 'round' : ''}" />` : `<div class="ph"></div>`}
+      <div class="cimg">${c.thumbnail ? `<img loading="lazy" src="${esc(c.thumbnail)}" alt="" class="${c.kind === 'artist' ? 'round' : ''}" />` : phHtml(c.title, c.kind === 'artist' ? 'user' : c.kind === 'playlist' ? 'queue' : 'disc')}
       ${playable ? `<button class="cplay" data-play="1" title="Play">${ic('play')}</button>` : ''}</div>
       <div class="ct">${esc(c.title)}</div><div class="a">${esc(c.artist || KIND_LABEL[c.kind] || '')}</div>
     </div>`;
 }
+const phHtml = (text, icon) => `<div class="ph" style="background:linear-gradient(135deg, ${heroColor(text)}, #17131f)">${ic(icon)}</div>`;
 function heroColor(text) {
   let h = 0;
   for (const ch of String(text || 'x')) h = (h * 31 + ch.charCodeAt(0)) % 360;
@@ -48,8 +61,10 @@ function renderPage(title, page, keepScroll) {
   $('hero').style.setProperty('--hero', heroColor(page.header?.title || title));
   const cur = state.queue[state.index]?.id;
   let html = '';
+  if (page.html) { $('list').innerHTML = page.html; if (!keepScroll) $('scroll').scrollTop = 0; return; }
   const allSongs = state.sections.flatMap((s) => s.items).filter((x) => (x.kind || 'song') === 'song');
   if (page.header?.title) {
+    if (!page.header.thumbnail) page.header.thumbnail = allSongs.find((s) => s.thumbnail)?.thumbnail || '';
     html += `<div class="phead">${page.header.thumbnail ? `<img src="${esc(page.header.thumbnail)}" alt="" />` : ''}<div><div class="pk">${esc(page.kindLabel || '')}</div><div class="pt">${esc(page.header.title)}</div><div class="a">${esc(page.header.subtitle || '')}</div></div></div>`;
   }
   if (allSongs.length && (page.header?.title || state.sections.length === 1)) {
@@ -74,7 +89,7 @@ function renderPage(title, page, keepScroll) {
 }
 function cardSong(c, si, i) {
   return `<div class="card-i" data-s="${si}" data-i="${i}">
-      <div class="cimg">${c.thumbnail ? `<img loading="lazy" src="${esc(c.thumbnail)}" alt="" />` : '<div class="ph"></div>'}<button class="cplay" data-song="1" title="Play">${ic('play')}</button></div>
+      <div class="cimg">${c.thumbnail ? `<img loading="lazy" src="${esc(c.thumbnail)}" alt="" />` : phHtml(c.title, 'note')}<button class="cplay" data-song="1" title="Play">${ic('play')}</button></div>
       <div class="ct">${esc(c.title)}</div><div class="a">${esc(c.artist)}</div>
     </div>`;
 }
@@ -140,10 +155,23 @@ const VIEWS = {
     };
     return d;
   },
-  explore: () => browseDesc('Explore', 'FEmusic_explore'),
+  explore: () => {
+    const d = browseDesc('Explore', 'FEmusic_explore');
+    const inner = d.load;
+    d.load = async () => {
+      const p = await inner();
+      // The big "New releases / Charts / Moods" buttons are replaced by a real New releases shelf below.
+      p.sections = (p.sections || []).map((s) => ({ ...s, items: s.items.filter((i) => !(i.kind === 'mood' && /moods|genres|new releases|charts/i.test(i.title))) })).filter((s) => s.items.length);
+      return p;
+    };
+    d.after = async () => {
+      const np = await unwrap(window.api.browse('FEmusic_new_releases_albums'));
+      const sec = (np.sections || []).find((s) => s.items.some((i) => i.kind === 'album')) || (np.sections || [])[0];
+      return sec ? { title: 'New releases', shelf: true, items: sec.items.filter((i) => i.kind !== 'mood') } : null;
+    };
+    return d;
+  },
   charts: () => browseDesc('Charts', 'FEmusic_charts'),
-  newreleases: () => browseDesc('New releases', 'FEmusic_new_releases_albums'),
-  moods: () => browseDesc('Moods & genres', 'FEmusic_moods_and_genres'),
   history: () => browseDesc('History', 'FEmusic_history'),
   liked: () => {
     const d = playlistDesc('Liked songs', 'LM');
@@ -185,7 +213,7 @@ const VIEWS = {
     load: async () => {
       const lists = (await unwrap(window.api.library())).filter((p) => !isLikedList(p));
       if (!lists.length) return { error: 'No playlists found. Sign in (bottom left) to see your playlists.' };
-      return { sections: [{ title: 'Playlists', items: lists.map((p) => ({ kind: 'playlist', id: p.id, title: p.title, artist: p.count, thumbnail: '' })) }] };
+      return { sections: [{ title: 'Playlists', items: lists.map((p) => ({ kind: 'playlist', id: p.id, title: p.title, artist: p.count, thumbnail: p.thumbnail || '' })) }] };
     },
   }),
   recommended: () => ({
@@ -325,7 +353,7 @@ async function loadSideLibrary(on) {
   const r = await window.api.library();
   if (r.ok) r.data = r.data.filter((p) => !isLikedList(p));
   if (!r.ok || !r.data.length) { box.innerHTML = ''; return; }
-  box.innerHTML = r.data.map((p) => `<div class="sl" data-id="${esc(p.id)}" data-title="${esc(p.title)}"><span class="tile">${ic('note')}</span><div class="st"><div class="sn">${esc(p.title)}</div><div class="ss">Playlist${p.count ? ' · ' + esc(p.count) : ''}</div></div></div>`).join('');
+  box.innerHTML = r.data.map((p) => `<div class="sl" data-id="${esc(p.id)}" data-title="${esc(p.title)}"><span class="tile">${p.thumbnail ? `<img loading="lazy" src="${esc(p.thumbnail)}" alt="" />` : ic('note')}</span><div class="st"><div class="sn">${esc(p.title)}</div><div class="ss">Playlist${p.count ? ' · ' + esc(p.count) : ''}</div></div></div>`).join('');
 }
 $('sidelib').addEventListener('click', (e) => {
   const el = e.target.closest('.sl');
@@ -333,14 +361,71 @@ $('sidelib').addEventListener('click', (e) => {
 });
 
 // ---------- account ----------
+const cogDot = () => (state.update?.state === 'ready' ? '<span class="dot"></span>' : '');
 async function refreshAccount() {
   const r = await window.api.authStatus();
   const on = r.ok && r.data.signedIn;
-  $('account').innerHTML = on ? '<button id="out">Sign out</button>' : '<button id="in">Sign in</button>';
+  state.signedIn = on;
+  const cog = `<button class="round" id="cog" title="Settings">${ic('cog')}${cogDot()}</button>`;
+  if (!on) {
+    $('account').innerHTML = `<button class="signin" id="in">Sign in</button>${cog}`;
+    $('in').onclick = async () => { setStatus('Signing in…'); await window.api.login(); await refreshAccount(); show(state.view || 'home'); };
+  } else {
+    $('account').innerHTML = `<button class="round" id="me" title="Account">${ic('user')}</button>${cog}`;
+    $('me').onclick = (e) => {
+      const b = e.currentTarget.getBoundingClientRect();
+      showMenu(b.right - 230, b.bottom + 6, [
+        { header: state.account?.name || 'Your YouTube account' },
+        { label: 'Settings', icon: 'cog', action: () => openRoot(VIEWS.settings(), '') },
+        { sep: true },
+        { label: 'Sign out', icon: 'left', danger: true, action: signOut },
+      ]);
+    };
+    window.api.accountInfo().then((ai) => {
+      if (!ai.ok) return;
+      state.account = ai.data;
+      const me = $('me');
+      if (me && ai.data.photo) me.innerHTML = `<img src="${esc(ai.data.photo)}" alt="" />`;
+      else if (me && ai.data.name) me.textContent = ai.data.name.trim()[0].toUpperCase();
+      if (nav.current?.id === 'settings') renderSettings();
+    });
+  }
+  $('cog').onclick = () => openRoot(VIEWS.settings(), '');
   loadSideLibrary(on);
-  if (on) $('out').onclick = async () => { await window.api.logout(); await refreshAccount(); show('home'); };
-  else $('in').onclick = async () => { setStatus('Signing in…'); await window.api.login(); await refreshAccount(); show(state.view || 'home'); };
 }
+async function signOut() { await window.api.logout(); state.account = null; await refreshAccount(); show('home'); }
+
+// ---------- settings ----------
+async function settingsHtml() {
+  const [ver, st, dl] = await Promise.all([window.api.version(), window.api.getSettings(), window.api.dlList()]);
+  const u = state.update || {};
+  const ustate = u.state === 'downloading' ? `Downloading ${u.version} (${u.mb} MB)…` : u.state === 'ready' ? `Update ${u.version} is ready` : u.state === 'error' ? `Check failed: ${esc(String(u.message || '').slice(0, 80))}` : u.state === 'uptodate' ? "You're on the latest version" : 'Updates download in the background';
+  const mb = (list) => (list.reduce((n, s) => n + s.size, 0) / 1048576).toFixed(0);
+  const saved = dl.ok ? mb(dl.data.downloaded) : '0', cached = dl.ok ? mb(dl.data.cached) : '0';
+  const acc = state.account || {};
+  const me = state.signedIn
+    ? `<div class="line">${acc.photo ? `<img class="av" src="${esc(acc.photo)}" alt="" />` : `<div class="av">${esc((acc.name || '?').trim()[0]?.toUpperCase() || '?')}</div>`}<div class="l"><div>${esc(acc.name || 'Signed in')}</div><div class="s">Same YouTube account as your phone</div></div><button class="ghost" data-set="signout">Sign out</button></div>`
+    : `<div class="line"><div class="l"><div>Not signed in</div><div class="s">Sign in to see your playlists and likes</div></div><button class="go" data-set="signin">Sign in</button></div>`;
+  return `<div class="set">
+    <h3>Account</h3><div class="box">${me}</div>
+    <h3>Updates</h3><div class="box"><div class="line"><div class="l"><div>ArchiveTune Desktop ${ver.ok ? 'v' + esc(ver.data) : ''}</div><div class="s">${ustate}</div></div>${u.state === 'ready' ? '<button class="go" data-set="restart">Restart to update</button>' : '<button data-set="check">Check for updates</button>'}</div></div>
+    <h3>App</h3><div class="box"><div class="line"><div class="l"><div>Keep playing in the tray</div><div class="s">Closing the window hides the app instead of quitting</div></div><div class="sw${st.ok && st.data.closeToTray ? ' on' : ''}" data-set="tray"></div></div></div>
+    <h3>Storage</h3><div class="box"><div class="line"><div class="l"><div>Downloads</div><div class="s">${saved} MB saved for offline</div></div></div><div class="line"><div class="l"><div>Recently played</div><div class="s">${cached} MB kept automatically</div></div><button class="ghost" data-set="clear">Clear</button></div></div>
+  </div>`;
+}
+async function renderSettings() { if (nav.current?.id === 'settings') $('list').innerHTML = await settingsHtml(); }
+VIEWS.settings = () => ({ id: 'settings', title: 'Settings', load: async () => ({ html: await settingsHtml() }) });
+$('list').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-set]');
+  if (!b) return;
+  const k = b.dataset.set;
+  if (k === 'signout') return signOut();
+  if (k === 'signin') { await window.api.login(); await refreshAccount(); return show('home'); }
+  if (k === 'restart') return window.api.restart();
+  if (k === 'check') { state.update = { state: 'downloading', version: '…', mb: '' }; state.update = {}; window.api.checkUpdate(); toast('Checking for updates…'); return; }
+  if (k === 'tray') { const st = await window.api.getSettings(); await window.api.setSettings({ closeToTray: !(st.ok && st.data.closeToTray) }); return renderSettings(); }
+  if (k === 'clear') { await window.api.clearCache(); toast('Cleared'); return renderSettings(); }
+});
 
 // ---------- playback (permanent shuffle) ----------
 function playFromList(songs, pickedId) {
@@ -367,6 +452,7 @@ async function playCurrent() {
   $('np-title').textContent = song.title;
   $('np-artist').textContent = song.artist;
   $('art').src = song.thumbnail || '';
+  setTile('tile-q', song.thumbnail);
   document.title = `${song.title} · ArchiveTune`;
   highlight();
   refreshLike();
@@ -906,13 +992,10 @@ function showOffline() {
 window.addEventListener('offline', () => { showOffline(); toast("You're offline – opening Downloads"); show('downloads'); });
 window.addEventListener('online', showOffline);
 
-window.api.version().then((r) => { if (r.ok) $('ver').textContent = `· v${r.data}`; });
 window.api.onUpdate((m) => {
-  const box = $('update');
-  if (m.state === 'downloading') box.textContent = `Downloading update ${m.version} (${m.mb} MB)…`;
-  else if (m.state === 'ready') { box.innerHTML = `<button id="restart">Update ${m.version} ready – restart</button>`; $('restart').onclick = () => window.api.restart(); }
-  else if (m.state === 'uptodate') box.textContent = 'Up to date';
-  else if (m.state === 'error') box.textContent = `Update check failed: ${String(m.message).slice(0, 80)}`;
+  state.update = m;
+  if (m.state === 'ready') { toast(`Update ${m.version} ready – open Settings to restart`); refreshAccount(); }
+  renderSettings();
 });
 window.api.onProgress((m) => { if (m.id === state.queue[state.index]?.id && audio.paused) setStatus(`Downloading song… ${m.pct}%`); });
 refreshDownloaded();

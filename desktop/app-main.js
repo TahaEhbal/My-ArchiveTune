@@ -5,7 +5,7 @@ const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 
 const REPO = 'TahaEhbal/My-ArchiveTune';
-const { parseBrowse, findContinuation: findCont, idsFromRuns } = require('./parse');
+const { parseBrowse, findContinuation: findCont, idsFromRuns, hires } = require('./parse');
 
 const SOURCE_PLAYLIST_NAME = 'the main playlist';
 const COOKIE_DOMAINS = ['.youtube.com', 'youtube.com', '.google.com', 'accounts.google.com', 'music.youtube.com'];
@@ -23,7 +23,7 @@ const text = (v) => (v == null ? '' : typeof v === 'string' ? v : v.text ?? v.to
 const thumb = (t) => {
   const arr = t?.contents ?? t ?? [];
   const list = Array.isArray(arr) ? arr : [];
-  return list.length ? list[list.length - 1].url : '';
+  return list.length ? hires(list[list.length - 1].url) : '';
 };
 function normalizeSong(i) {
   const id = i.id || i.video_id || i.endpoint?.payload?.videoId;
@@ -145,7 +145,7 @@ async function rawBrowse(args) {
 }
 const lastThumb = (t) => {
   const a = t?.musicThumbnailRenderer?.thumbnail?.thumbnails ?? t?.thumbnails ?? [];
-  return a.length ? a[a.length - 1].url : '';
+  return a.length ? hires(a[a.length - 1].url) : '';
 };
 function songFromRenderer(r) {
   const id = r.playlistItemData?.videoId ?? r.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId;
@@ -170,10 +170,10 @@ function findContinuation(data) {
 async function library() {
   if (!signedIn()) return [];
   const found = new Map();
-  const add = (id, title, count) => {
+  const add = (id, title, count, thumbnail) => {
     id = String(id || '').replace(/^VL/, '');
     title = String(title || '').trim();
-    if (id && title && !found.has(id)) found.set(id, { id, title, count: count || '' });
+    if (id && title && !found.has(id)) found.set(id, { id, title, count: count || '', thumbnail: thumbnail || '' });
   };
   let data = await rawBrowse({ browseId: 'FEmusic_liked_playlists' });
   const first = data;
@@ -182,12 +182,12 @@ async function library() {
       const two = n.musicTwoRowItemRenderer;
       if (two) {
         const be = two.navigationEndpoint?.browseEndpoint;
-        if (be?.browseId?.startsWith('VL')) add(be.browseId, runsText(two.title), runsText(two.subtitle));
+        if (be?.browseId?.startsWith('VL')) add(be.browseId, runsText(two.title), runsText(two.subtitle), lastThumb(two.thumbnailRenderer));
       }
       const li = n.musicResponsiveListItemRenderer;
       if (li) {
         const be = li.navigationEndpoint?.browseEndpoint;
-        if (be?.browseId?.startsWith('VL')) add(be.browseId, runsText(li.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text), '');
+        if (be?.browseId?.startsWith('VL')) add(be.browseId, runsText(li.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text), '', lastThumb(li.thumbnail));
       }
     });
     const tok = findContinuation(data);
@@ -683,10 +683,34 @@ const wrap = (fn) => async (_e, ...a) => {
 };
 ipcMain.handle('auth:status', wrap(async () => ({ signedIn: signedIn() })));
 ipcMain.handle('auth:login', wrap(async () => ({ signedIn: await loginFlow() })));
+let accountInfo = null;
+ipcMain.handle('auth:info', wrap(async () => {
+  if (!signedIn()) return {};
+  if (accountInfo) return accountInfo;
+  try {
+    const y = await getYt();
+    const info = await y.account.getInfo();
+    const a = info?.contents?.contents?.[0] ?? info?.contents?.[0];
+    accountInfo = { name: String(a?.account_name?.toString?.() ?? a?.account_name?.text ?? ''), photo: hires(a?.account_photo?.[0]?.url ?? '') };
+  } catch { accountInfo = { name: '', photo: '' }; }
+  return accountInfo;
+}));
+ipcMain.handle('settings:get', wrap(async () => ({ ...settings })));
+ipcMain.handle('settings:set', wrap(async (patch) => {
+  if (patch && typeof patch.closeToTray === 'boolean') settings.closeToTray = patch.closeToTray;
+  saveSettings();
+  return { ...settings };
+}));
+ipcMain.handle('update:check', wrap(async () => { checkForUpdate(); return true; }));
+ipcMain.handle('cache:clear', wrap(async () => {
+  let n = 0;
+  try { for (const f of fs.readdirSync(cacheDir())) { try { fs.rmSync(path.join(cacheDir(), f), { force: true }); n++; } catch { /* in use */ } } } catch { /* none */ }
+  return n;
+}));
 ipcMain.handle('auth:logout', wrap(async () => {
   for (const f of [cookieJsonPath(), cookieTxtPath()]) fs.rmSync(f, { force: true });
   await session.fromPartition('persist:login').clearStorageData();
-  cookieHeader = ''; yt = null;
+  cookieHeader = ''; yt = null; accountInfo = null;
   return { signedIn: false };
 }));
 ipcMain.handle('yt:browse', wrap(async (id, params) => {

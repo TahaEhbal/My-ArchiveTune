@@ -3,6 +3,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('api', {
   authStatus: () => ipcRenderer.invoke('auth:status'),
   login: () => ipcRenderer.invoke('auth:login'),
+  accountInfo: () => ipcRenderer.invoke('auth:info'),
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  setSettings: (p) => ipcRenderer.invoke('settings:set', p),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  clearCache: () => ipcRenderer.invoke('cache:clear'),
   logout: () => ipcRenderer.invoke('auth:logout'),
   browse: (id, params) => ipcRenderer.invoke('yt:browse', id, params),
   lyrics: (song) => ipcRenderer.invoke('yt:lyrics', song),
