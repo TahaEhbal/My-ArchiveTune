@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld('api', {
   search: (q) => ipcRenderer.invoke('yt:search', q),
   library: () => ipcRenderer.invoke('yt:library'),
   playlist: (id) => ipcRenderer.invoke('yt:playlist', id),
-  recommended: () => ipcRenderer.invoke('yt:recommended'),
+  recommended: (force) => ipcRenderer.invoke('yt:recommended', force),
   stream: (videoId, prio, meta) => ipcRenderer.invoke('yt:stream', videoId, prio, meta),
   dlAdd: (song) => ipcRenderer.invoke('dl:add', song),
   dlRemove: (id) => ipcRenderer.invoke('dl:remove', id),

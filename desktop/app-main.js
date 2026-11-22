@@ -718,7 +718,19 @@ ipcMain.handle('yt:syncRecommended', wrap(syncRecommended));
 ipcMain.handle('yt:search', wrap(search));
 ipcMain.handle('yt:library', wrap(library));
 ipcMain.handle('yt:playlist', wrap(playlistSongs));
-ipcMain.handle('yt:recommended', wrap(recommended));
+ipcMain.handle('yt:recommended', wrap(async (force) => {
+  // Building the list takes ~25 requests, so keep the result for 6 hours unless a refresh is asked for.
+  const file = path.join(userData(), 'recommended.json');
+  if (!force) {
+    try {
+      const c = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (Date.now() - c.at < 6 * 3600e3 && c.songs?.length) return { songs: c.songs };
+    } catch { /* build fresh */ }
+  }
+  const r = await recommended();
+  if (r.songs?.length) fs.writeFileSync(file, JSON.stringify({ at: Date.now(), songs: r.songs }));
+  return r;
+}));
 ipcMain.handle('yt:stream', wrap((id, prio, meta) => resolveStream(id, prio, meta)));
 ipcMain.handle('app:version', wrap(async () => currentVersion()));
 ipcMain.handle('app:restart', async () => {

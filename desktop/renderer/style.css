@@ -199,3 +199,4 @@ img[src=""], img:not([src]) { visibility:hidden; }
 .row.dropafter { box-shadow:0 2px 0 var(--accent); }
 .row[draggable="true"] { cursor:grab; }
 .offline { background:#2a1c10; color:#ffcf99; padding:10px 14px; border-radius:8px; margin:0 0 12px; font-size:13px; }
+.pill.small { padding:6px 14px; font-size:12px; margin-left:14px; }

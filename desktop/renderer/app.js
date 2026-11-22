@@ -41,7 +41,7 @@ function heroColor(text) {
   for (const ch of String(text || 'x')) h = (h * 31 + ch.charCodeAt(0)) % 360;
   return `hsl(${h}, 48%, 24%)`;
 }
-function renderPage(title, page) {
+function renderPage(title, page, keepScroll) {
   state.sections = page.sections || [];
   $('title').textContent = page.header?.title ? '' : title;
   document.querySelector('.pagehead').style.display = page.header?.title ? 'none' : '';
@@ -53,21 +53,21 @@ function renderPage(title, page) {
     html += `<div class="phead">${page.header.thumbnail ? `<img src="${esc(page.header.thumbnail)}" alt="" />` : ''}<div><div class="pk">${esc(page.kindLabel || '')}</div><div class="pt">${esc(page.header.title)}</div><div class="a">${esc(page.header.subtitle || '')}</div></div></div>`;
   }
   if (allSongs.length && (page.header?.title || state.sections.length === 1)) {
-    html += `<div class="actions"><button class="bigplay" data-playall="1" title="Shuffle play">${ic('play')}</button><button class="pill" data-dlall="1" title="Save these songs for offline">${ic('download')} Download</button>${page.syncable ? `<button class="pill" data-sync="1" title="Create or update this playlist on your YouTube account">${ic('sync')} Sync to my account</button>` : ''}<span class="hint">${allSongs.length} songs</span></div>`;
+    html += `<div class="actions"><button class="bigplay" data-playall="1" title="Shuffle play">${ic('play')}</button><button class="pill" data-dlall="1" title="Save these songs for offline">${ic('download')} Download</button>${page.syncable ? `<button class="pill" data-refresh="1" title="Build a fresh list">${ic('repeat')} Refresh</button><button class="pill" data-sync="1" title="Create or update this playlist on your YouTube account">${ic('sync')} Sync to my account</button>` : ''}<span class="hint">${allSongs.length} songs</span></div>`;
   }
   state.sections.forEach((sec, si) => {
     const items = sec.items.map((it) => ({ ...it, kind: it.kind || 'song' }));
     sec.items = items;
     const songs = items.filter((x) => x.kind === 'song');
     if (sec.title) {
-      const shelf = songs.length !== items.length && items.length > 5;
-      html += `<div class="sechead"><h3 class="sec">${esc(sec.title)}</h3>${shelf ? `<div class="arrows"><button data-scroll="-1" title="Back">${ic('left')}</button><button data-scroll="1" title="Next">${ic('right')}</button></div>` : ''}</div>`;
+      const shelf = sec.shelf || (songs.length !== items.length && items.length > 5);
+      html += `<div class="sechead"><h3 class="sec">${esc(sec.title)}</h3>${sec.more ? `<button class="pill small" data-goview="${esc(sec.more.view)}">${esc(sec.more.label)}</button>` : ''}${shelf ? `<div class="arrows"><button data-scroll="-1" title="Back">${ic('left')}</button><button data-scroll="1" title="Next">${ic('right')}</button></div>` : ''}</div>`;
     }
-    if (songs.length === items.length) html += items.map((s, i) => rowHtml(s, si, i, cur)).join('');
+    if (songs.length === items.length && !sec.shelf) html += items.map((s, i) => rowHtml(s, si, i, cur)).join('');
     else html += `<div class="shelf">${items.map((c, i) => (c.kind === 'song' ? cardSong(c, si, i) : cardHtml(c, si, i))).join('')}</div>`;
   });
   $('list').innerHTML = html || '<div class="msg">Nothing here yet.</div>';
-  $('scroll').scrollTop = 0;
+  if (!keepScroll) $('scroll').scrollTop = 0;
   if (nav.current?.id === 'queue') {
     document.querySelectorAll('#list .row').forEach((r, n) => { if (n > 0) r.draggable = true; }); // the playing song stays on top
   }
@@ -99,6 +99,14 @@ async function openPage(desc, push = true) {
   setStatus('');
   if (page.error) return showMessage(desc.title, page.error);
   renderPage(page.title || desc.title, page);
+  if (desc.after) {
+    // Slow extras (like Recommended) load after the page is already visible, then slot in at the top.
+    desc.after(page).then((sec) => {
+      if (!sec || nav.current !== desc) return;
+      page.sections.unshift(sec);
+      renderPage(page.title || desc.title, page, true);
+    }).catch(() => {});
+  }
 }
 function openRoot(desc, viewName) {
   nav.stack = [];
@@ -121,7 +129,17 @@ const playlistDesc = (title, id) => ({
 });
 
 const VIEWS = {
-  home: () => browseDesc('Home', 'FEmusic_home'),
+  home: () => {
+    const d = browseDesc('Home', 'FEmusic_home');
+    d.after = async () => {
+      const auth = await window.api.authStatus();
+      if (!auth.ok || !auth.data.signedIn) return null;
+      const r = await window.api.recommended();
+      if (!r.ok || !r.data.songs?.length) return null;
+      return { title: 'Recommended for you', shelf: true, more: { label: 'Show all', view: 'recommended' }, items: r.data.songs.slice(0, 24) };
+    };
+    return d;
+  },
   explore: () => browseDesc('Explore', 'FEmusic_explore'),
   charts: () => browseDesc('Charts', 'FEmusic_charts'),
   newreleases: () => browseDesc('New releases', 'FEmusic_new_releases_albums'),
@@ -165,7 +183,7 @@ const VIEWS = {
   library: () => ({
     title: 'Library',
     load: async () => {
-      const lists = await unwrap(window.api.library());
+      const lists = (await unwrap(window.api.library())).filter((p) => !isLikedList(p));
       if (!lists.length) return { error: 'No playlists found. Sign in (bottom left) to see your playlists.' };
       return { sections: [{ title: 'Playlists', items: lists.map((p) => ({ kind: 'playlist', id: p.id, title: p.title, artist: p.count, thumbnail: '' })) }] };
     },
@@ -173,8 +191,9 @@ const VIEWS = {
   recommended: () => ({
     title: 'Recommended for you',
     loading: 'Building your list from "the main playlist"…',
-    load: async () => {
-      const d = await unwrap(window.api.recommended());
+    load: async function () {
+      const d = await unwrap(window.api.recommended(this.force));
+      this.force = false;
       if (d.error) return { error: d.error };
       return { title: `Recommended for you (${d.songs.length})`, syncable: true, sections: [{ title: '', items: d.songs }] };
     },
@@ -190,6 +209,9 @@ $('list').addEventListener('click', async (e) => {
     shelf?.scrollBy({ left: Number(scrollBtn.dataset.scroll) * 600 });
     return;
   }
+  const goView = e.target.closest('[data-goview]');
+  if (goView) return show(goView.dataset.goview);
+  if (e.target.closest('[data-refresh]')) { nav.current.force = true; return openPage(nav.current, false); }
   if (e.target.closest('[data-dlall]')) {
     const songs = state.sections.flatMap((s) => s.items).filter((x) => x.kind === 'song');
     return downloadMany(songs);
@@ -295,11 +317,13 @@ $('q').addEventListener('input', () => {
   }, 350);
 });
 
+const isLikedList = (p) => p.id === 'LM' || /^(liked music|your likes?|liked songs)$/i.test(String(p.title).trim());
 // ---------- sidebar library ----------
 async function loadSideLibrary(on) {
   const box = $('sidelib');
   if (!on) { box.innerHTML = '<div class="msg" style="padding:8px 10px;font-size:13px">Sign in to see your playlists here.</div>'; return; }
   const r = await window.api.library();
+  if (r.ok) r.data = r.data.filter((p) => !isLikedList(p));
   if (!r.ok || !r.data.length) { box.innerHTML = ''; return; }
   box.innerHTML = r.data.map((p) => `<div class="sl" data-id="${esc(p.id)}" data-title="${esc(p.title)}"><span class="tile">${ic('note')}</span><div class="st"><div class="sn">${esc(p.title)}</div><div class="ss">Playlist${p.count ? ' · ' + esc(p.count) : ''}</div></div></div>`).join('');
 }
@@ -761,7 +785,7 @@ async function removeDownloaded(song) {
 // --- song actions
 async function playlistSubmenu(song) {
   const r = await window.api.library();
-  const lists = (r.ok ? r.data : []).filter((p) => p.id !== 'LM');
+  const lists = (r.ok ? r.data : []).filter((p) => !isLikedList(p));
   const out = [{ label: 'New playlist…', icon: 'plus', action: async () => {
     const name = await askName('New playlist');
     if (!name) return;
