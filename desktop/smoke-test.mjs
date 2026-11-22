@@ -33,3 +33,10 @@ for (const [name, id] of [['home', 'FEmusic_home'], ['explore', 'FEmusic_explore
 }
 if (firstAlbum) { try { summary(`album(${firstAlbum.title})`, await browse(firstAlbum.id)); } catch (e) { console.log('PARSE album FAILED', e.message); } }
 if (firstArtist) { try { summary(`artist(${firstArtist.title})`, await browse(firstArtist.id)); } catch (e) { console.log('PARSE artist FAILED', e.message); } }
+
+// --- lyrics source ---
+try {
+  const r = await fetch('https://lrclib.net/api/get?' + new URLSearchParams({ track_name: 'lovely', artist_name: 'Billie Eilish', duration: '200' }), { headers: { 'User-Agent': 'ArchiveTune-Desktop CI' } });
+  const j = r.ok ? await r.json() : null;
+  console.log(`LYRICS status=${r.status} synced=${Boolean(j?.syncedLyrics)} lines=${(j?.syncedLyrics || '').split('\n').length}`);
+} catch (e) { console.log('LYRICS FAILED', e.message); }

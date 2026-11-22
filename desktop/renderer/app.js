@@ -93,6 +93,21 @@ const VIEWS = {
   moods: () => browseDesc('Moods & genres', 'FEmusic_moods_and_genres'),
   history: () => browseDesc('History', 'FEmusic_history'),
   liked: () => playlistDesc('Liked songs', 'LM'),
+  stats: () => ({
+    title: 'Stats',
+    load: async () => {
+      const d = await unwrap(window.api.stats());
+      if (!d.total.plays) return { error: 'No listening yet. Play some songs and your top songs and artists will show up here.' };
+      const hrs = (d.total.seconds / 3600).toFixed(1);
+      return {
+        header: { title: `${d.total.plays} plays · ${hrs} hours`, subtitle: 'Counted on this PC (a song counts after 30 seconds)', thumbnail: '' },
+        sections: [
+          { title: 'Top songs', items: d.topSongs.map((s) => ({ kind: 'song', id: s.id, title: s.title, artist: `${s.artist} · ${s.plays} plays`, thumbnail: s.thumbnail, duration: 0 })) },
+          { title: 'Top artists', items: d.topArtists.map((x) => ({ kind: 'artist-stat', id: x.title, title: x.title, artist: `${x.plays} plays`, thumbnail: '' })) },
+        ],
+      };
+    },
+  }),
   queue: () => ({ title: 'Queue (always shuffled)', load: async () => ({ sections: [{ title: '', items: state.queue.slice(Math.max(0, state.index)) }] }) }),
   library: () => ({
     title: 'Library',
@@ -122,6 +137,7 @@ $('list').addEventListener('click', (e) => {
   const item = sec?.items[Number(el.dataset.i)];
   if (!item) return;
   if (item.kind === 'song') return playFromList(sec.items.filter((x) => x.kind === 'song'), item.id);
+  if (item.kind === 'artist-stat') return;
   if (item.kind === 'playlist') return openPage(playlistDesc(item.title, item.id));
   openPage(browseDesc(item.title, item.id, item.params));
 });
@@ -175,6 +191,9 @@ async function playCurrent() {
   $('art').src = song.thumbnail || '';
   document.title = `${song.title} · ArchiveTune`;
   highlight();
+  refreshLike();
+  countedFor = null;
+  if (!$('lyrics').hidden) loadLyrics(song);
   try {
     setStatus('Loading song…');
     audio.src = await urlFor(song);
@@ -255,7 +274,10 @@ $('next').onclick = () => next(false);
 $('prev').onclick = prev;
 audio.addEventListener('play', () => ($('play').textContent = '⏸'));
 audio.addEventListener('pause', () => ($('play').textContent = '▶'));
-audio.addEventListener('ended', () => next(true));
+audio.addEventListener('ended', () => {
+  if (sleepAfterSong) { sleepIdx = 0; sleepAfterSong = false; updateSleepLabel(); setStatus('Sleep timer: stopped after song'); return; }
+  next(true);
+});
 audio.addEventListener('error', () => {
   const song = state.queue[state.index];
   if (!song || !audio.src) return;
@@ -292,6 +314,111 @@ if ('mediaSession' in navigator) {
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.code === 'Space') { e.preventDefault(); $('play').click(); }
+});
+
+
+// ---------- lyrics ----------
+let lyricsState = { id: null, lines: [], idx: -1 };
+async function loadLyrics(song) {
+  if (!song || lyricsState.id === song.id) return;
+  lyricsState = { id: song.id, lines: [], idx: -1 };
+  $('lyr-body').textContent = 'Loading lyrics…';
+  $('lyr-src').textContent = '';
+  const r = await window.api.lyrics({ id: song.id, title: song.title, artist: song.artist, duration: song.duration || audio.duration || 0 });
+  if (lyricsState.id !== song.id) return;
+  if (!r.ok || (!r.data.synced.length && !r.data.plain)) { $('lyr-body').textContent = 'No lyrics found for this song.'; return; }
+  $('lyr-src').textContent = r.data.source;
+  if (r.data.synced.length) {
+    lyricsState.lines = r.data.synced;
+    $('lyr-body').innerHTML = r.data.synced.map((l, i) => `<div class="ln" data-i="${i}">${esc(l.text) || '♪'}</div>`).join('');
+  } else {
+    $('lyr-body').innerHTML = `<div class="plain">${esc(r.data.plain)}</div>`;
+  }
+}
+function syncLyrics() {
+  const L = lyricsState.lines;
+  if (!L.length || $('lyrics').hidden) return;
+  let idx = -1;
+  for (let i = 0; i < L.length; i++) { if (L[i].t <= audio.currentTime + 0.25) idx = i; else break; }
+  if (idx === lyricsState.idx) return;
+  lyricsState.idx = idx;
+  document.querySelectorAll('#lyr-body .ln').forEach((el, i) => el.classList.toggle('cur', i === idx));
+  document.querySelector('#lyr-body .ln.cur')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+$('lyr').onclick = () => {
+  const open = $('lyrics').hidden;
+  $('lyrics').hidden = !open;
+  $('lyr').classList.toggle('on', open);
+  if (open) { lyricsState.id = null; loadLyrics(state.queue[state.index]); }
+};
+$('lyr-close').onclick = () => { $('lyrics').hidden = true; $('lyr').classList.remove('on'); };
+$('lyr-body').addEventListener('click', (e) => {
+  const ln = e.target.closest('.ln');
+  if (ln && lyricsState.lines[Number(ln.dataset.i)]) audio.currentTime = lyricsState.lines[Number(ln.dataset.i)].t;
+});
+audio.addEventListener('timeupdate', syncLyrics);
+audio.addEventListener('loadedmetadata', () => { if (!$('lyrics').hidden) { lyricsState.id = null; loadLyrics(state.queue[state.index]); } });
+
+// ---------- likes ----------
+const liked = new Set();
+function refreshLike() {
+  const song = state.queue[state.index];
+  const on = song && liked.has(song.id);
+  $('like').textContent = on ? '♥' : '♡';
+  $('like').classList.toggle('on', !!on);
+}
+$('like').onclick = async () => {
+  const song = state.queue[state.index];
+  if (!song) return;
+  const want = !liked.has(song.id);
+  want ? liked.add(song.id) : liked.delete(song.id);
+  refreshLike();
+  const r = await window.api.like(song.id, want);
+  if (!r.ok) {
+    want ? liked.delete(song.id) : liked.add(song.id);
+    refreshLike();
+    setStatus(`Couldn't ${want ? 'like' : 'unlike'}: ${r.error.slice(0, 100)}`);
+  } else setStatus(want ? 'Added to your liked songs' : 'Removed from liked songs');
+};
+
+// ---------- sleep timer ----------
+const SLEEP_STEPS = [0, 15, 30, 45, 60, 'song'];
+let sleepIdx = 0, sleepEnd = 0, sleepTimer = null, sleepAfterSong = false;
+function updateSleepLabel() {
+  const btn = $('sleep');
+  const step = SLEEP_STEPS[sleepIdx];
+  btn.classList.toggle('on', step !== 0);
+  if (step === 0) btn.textContent = '☾';
+  else if (step === 'song') btn.textContent = '☾ end of song';
+  else btn.textContent = `☾ ${Math.max(0, Math.ceil((sleepEnd - Date.now()) / 60000))} min`;
+}
+function startSleep() {
+  clearInterval(sleepTimer);
+  sleepAfterSong = SLEEP_STEPS[sleepIdx] === 'song';
+  const step = SLEEP_STEPS[sleepIdx];
+  if (typeof step === 'number' && step > 0) sleepEnd = Date.now() + step * 60000;
+  updateSleepLabel();
+  if (step === 0 || step === 'song') return;
+  sleepTimer = setInterval(() => {
+    const left = sleepEnd - Date.now();
+    if (left <= 10000 && left > 0) audio.volume = Math.max(0, (left / 10000) * ($('vol').value / 100)); // fade out
+    if (left <= 0) {
+      clearInterval(sleepTimer);
+      audio.pause(); audio.volume = $('vol').value / 100;
+      sleepIdx = 0; updateSleepLabel(); setStatus('Sleep timer: paused');
+    } else updateSleepLabel();
+  }, 1000);
+}
+$('sleep').onclick = () => { sleepIdx = (sleepIdx + 1) % SLEEP_STEPS.length; startSleep(); };
+
+// ---------- stats ----------
+let countedFor = null;
+audio.addEventListener('timeupdate', () => {
+  const song = state.queue[state.index];
+  if (song && countedFor !== song.id && audio.currentTime >= 30) {
+    countedFor = song.id;
+    window.api.recordPlay({ id: song.id, title: song.title, artist: song.artist, thumbnail: song.thumbnail, seconds: audio.duration || 0 });
+  }
 });
 
 window.api.version().then((r) => { if (r.ok) $('ver').textContent = `· v${r.data}`; });

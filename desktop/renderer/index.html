@@ -20,6 +20,7 @@
       <button data-view="library" class="nav">Library</button>
       <button data-view="liked" class="nav">Liked songs</button>
       <button data-view="history" class="nav">History</button>
+      <button data-view="stats" class="nav">Stats</button>
       <button data-view="queue" class="nav">Queue</button>
     </nav>
     <div id="account"></div>
@@ -36,10 +37,14 @@
       <button id="prev" title="Previous">⏮</button>
       <button id="play" title="Play / pause">▶</button>
       <button id="next" title="Next">⏭</button>
+      <button id="like" title="Like (syncs to your YouTube account)">♡</button>
+      <button id="lyr" title="Lyrics">♪</button>
+      <button id="sleep" title="Sleep timer">☾</button>
     </div>
     <div id="seek"><span id="cur">0:00</span><input id="bar" type="range" min="0" max="1000" value="0" /><span id="dur">0:00</span></div>
     <input id="vol" type="range" min="0" max="100" value="80" title="Volume" />
   </footer>
+  <aside id="lyrics" hidden><div id="lyr-head"><b>Lyrics</b> <span id="lyr-src"></span><button id="lyr-close">✕</button></div><div id="lyr-body"></div></aside>
   <audio id="audio" preload="auto"></audio>
   <script src="app.js"></script>
 </body>

@@ -418,6 +418,101 @@ async function checkForUpdate() {
   }
 }
 
+
+// ---------- lyrics (synced via LRCLIB, plain text via YouTube as a fallback) ----------
+function cleanTitle(t) {
+  return String(t).replace(/\s*[\(\[][^)\]]*(official|video|audio|lyrics?|visualizer|remaster|feat|ft\.|with)[^)\]]*[\)\]]/gi, '').replace(/\s+-\s+(Official|Lyric).*$/i, '').trim();
+}
+function parseLrc(lrc) {
+  const out = [];
+  for (const line of String(lrc || '').split('\n')) {
+    const m = /^\s*((?:\[\d+:\d+(?:[.:]\d+)?\])+)\s*(.*)$/.exec(line);
+    if (!m) continue;
+    for (const ts of m[1].match(/\[\d+:\d+(?:[.:]\d+)?\]/g)) {
+      const [, mm, ss] = /\[(\d+):(\d+(?:[.:]\d+)?)\]/.exec(ts);
+      out.push({ t: Number(mm) * 60 + Number(ss.replace(':', '.')), text: m[2] });
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+const lyricsCache = new Map();
+async function getLyrics({ id, title, artist, duration }) {
+  if (lyricsCache.has(id)) return lyricsCache.get(id);
+  const headers = { 'User-Agent': 'ArchiveTune-Desktop (https://github.com/TahaEhbal/My-ArchiveTune)' };
+  const name = cleanTitle(title);
+  const art = String(artist || '').split(/,|&/)[0].trim();
+  let result = null;
+  const take = (r) => {
+    if (!r) return false;
+    const synced = parseLrc(r.syncedLyrics);
+    if (synced.length || r.plainLyrics) { result = { synced, plain: r.plainLyrics || '', source: 'LRCLIB' }; return true; }
+    return false;
+  };
+  try {
+    const q = new URLSearchParams({ track_name: name, artist_name: art, ...(duration ? { duration: String(Math.round(duration)) } : {}) });
+    const r = await fetch(`https://lrclib.net/api/get?${q}`, { headers });
+    if (r.ok) take(await r.json());
+  } catch { /* try search */ }
+  if (!result) {
+    try {
+      const r = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(`${name} ${art}`)}`, { headers });
+      if (r.ok) {
+        const list = await r.json();
+        const best = list.find((x) => x.syncedLyrics) || list[0];
+        take(best);
+      }
+    } catch { /* ignore */ }
+  }
+  if (!result) {
+    try {
+      const y = await getYt();
+      const l = await y.music.getLyrics(id);
+      const plain = l?.description?.text ?? '';
+      if (plain) result = { synced: [], plain, source: 'YouTube Music' };
+    } catch { /* ignore */ }
+  }
+  result = result || { synced: [], plain: '', source: '' };
+  lyricsCache.set(id, result);
+  return result;
+}
+
+// ---------- local listening stats ----------
+const statsPath = () => path.join(userData(), 'stats.json');
+function readStats() {
+  try { return JSON.parse(fs.readFileSync(statsPath(), 'utf8')); } catch { return { songs: {}, total: { plays: 0, seconds: 0 } }; }
+}
+function recordPlay(song) {
+  const s = readStats();
+  const e = s.songs[song.id] || { id: song.id, title: song.title, artist: song.artist, thumbnail: song.thumbnail, plays: 0, seconds: 0 };
+  e.plays++; e.seconds += Math.round(song.seconds || 0);
+  e.last = Date.now();
+  s.songs[song.id] = e;
+  s.total.plays++; s.total.seconds += Math.round(song.seconds || 0);
+  fs.writeFileSync(statsPath(), JSON.stringify(s));
+}
+function statsSummary() {
+  const s = readStats();
+  const songs = Object.values(s.songs);
+  const artists = {};
+  songs.forEach((x) => String(x.artist || 'Unknown').split(', ').forEach((a) => {
+    artists[a] = artists[a] || { title: a, plays: 0 };
+    artists[a].plays += x.plays;
+  }));
+  return {
+    total: s.total,
+    topSongs: songs.sort((a, b) => b.plays - a.plays || b.last - a.last).slice(0, 50),
+    topArtists: Object.values(artists).sort((a, b) => b.plays - a.plays).slice(0, 30),
+  };
+}
+
+// Like / unlike a song on the YouTube account, so it shows up in the phone app too.
+async function setLiked(id, liked) {
+  const y = await getYt();
+  if (!signedIn()) throw new Error('Sign in to like songs');
+  if (liked) await y.interact.like(id); else await y.interact.removeRating(id);
+  return liked;
+}
+
 // ---------- window / IPC ----------
 function createWindow() {
   Menu.setApplicationMenu(null);
@@ -458,6 +553,10 @@ ipcMain.handle('yt:browse', wrap(async (id, params) => {
   }
   return page;
 }));
+ipcMain.handle('yt:lyrics', wrap(getLyrics));
+ipcMain.handle('stats:play', wrap(async (song) => recordPlay(song)));
+ipcMain.handle('stats:get', wrap(async () => statsSummary()));
+ipcMain.handle('yt:like', wrap(setLiked));
 ipcMain.handle('yt:search', wrap(search));
 ipcMain.handle('yt:library', wrap(library));
 ipcMain.handle('yt:playlist', wrap(playlistSongs));
