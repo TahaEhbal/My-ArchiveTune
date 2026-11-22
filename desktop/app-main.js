@@ -49,15 +49,23 @@ function toNetscape(cookies) {
   }
   return lines.join('\n') + '\n';
 }
+function buildHeader(cookies) {
+  const byName = new Map();
+  for (const c of cookies) {
+    if (!/youtube\.com|google\.com/.test(c.domain)) continue;
+    const prefer = c.domain.includes('youtube.com');
+    if (!byName.has(c.name) || prefer) byName.set(c.name, c.value);
+  }
+  return [...byName].map(([k, v]) => `${k}=${v}`).join('; ');
+}
 function saveCookies(cookies) {
   fs.writeFileSync(cookieJsonPath(), JSON.stringify(cookies));
   fs.writeFileSync(cookieTxtPath(), toNetscape(cookies));
-  cookieHeader = cookies.filter((c) => /youtube\.com|google\.com/.test(c.domain)).map((c) => `${c.name}=${c.value}`).join('; ');
+  cookieHeader = buildHeader(cookies);
 }
 function loadCookies() {
   try {
-    const cookies = JSON.parse(fs.readFileSync(cookieJsonPath(), 'utf8'));
-    cookieHeader = cookies.filter((c) => /youtube\.com|google\.com/.test(c.domain)).map((c) => `${c.name}=${c.value}`).join('; ');
+    cookieHeader = buildHeader(JSON.parse(fs.readFileSync(cookieJsonPath(), 'utf8')));
   } catch {
     cookieHeader = '';
   }
@@ -164,6 +172,7 @@ async function library() {
     if (id && title && !found.has(id)) found.set(id, { id, title, count: count || '' });
   };
   let data = await rawBrowse({ browseId: 'FEmusic_liked_playlists' });
+  const first = data;
   for (let page = 0; page < 10 && data; page++) {
     walk(data, (n) => {
       const two = n.musicTwoRowItemRenderer;
@@ -180,6 +189,12 @@ async function library() {
     const tok = findContinuation(data);
     if (!tok) break;
     data = await rawBrowse({ continuation: tok }).catch(() => null);
+  }
+  if (!found.size) {
+    let loggedIn = '?';
+    walk(first, (n) => { if (n.key === 'logged_in') loggedIn = n.value; });
+    const y = await getYt();
+    throw new Error(`YouTube returned no playlists (logged_in=${loggedIn}, session=${y.session?.logged_in}, cookies=${cookieHeader.split('; ').length}, SAPISID=${/SAPISID=/.test(cookieHeader)}, top=${Object.keys(first?.contents ?? first ?? {}).join(',')}). Try Sign out, then Sign in again.`);
   }
   return [...found.values()];
 }
@@ -262,28 +277,38 @@ function ytDlpPath() {
   return fs.existsSync(dev) ? dev : 'yt-dlp';
 }
 const urlCache = new Map(); // id -> { url, at }
-function resolveStream(videoId) {
-  const hit = urlCache.get(videoId);
-  if (hit && Date.now() - hit.at < 20 * 60 * 1000) return Promise.resolve(hit.url);
+function runYtDlp(videoId, useCookies) {
   return new Promise((resolve, reject) => {
-    const args = ['-f', 'bestaudio[ext=m4a]/bestaudio', '-g', '--no-playlist', '--no-warnings'];
-    if (fs.existsSync(cookieTxtPath()) && signedIn()) args.push('--cookies', cookieTxtPath());
+    // yt-dlp needs a JavaScript engine to solve YouTube's checks. Use this app's own (Electron
+    // behaves like Node when ELECTRON_RUN_AS_NODE is set), so nothing extra has to be installed.
+    const args = ['-f', 'bestaudio[ext=m4a]/bestaudio/best', '-g', '--no-playlist', '--no-warnings',
+      '--js-runtimes', `node:${process.execPath}`];
+    if (useCookies && fs.existsSync(cookieTxtPath()) && signedIn()) args.push('--cookies', cookieTxtPath());
     args.push(`https://music.youtube.com/watch?v=${videoId}`);
-    const p = spawn(ytDlpPath(), args, { windowsHide: true });
+    const p = spawn(ytDlpPath(), args, { windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
     let out = '', err = '';
     p.stdout.on('data', (d) => (out += d));
     p.stderr.on('data', (d) => (err += d));
     p.on('error', (e) => reject(new Error(`Could not start yt-dlp: ${e.message}`)));
     p.on('close', (code) => {
       const url = out.split('\n').map((l) => l.trim()).find((l) => l.startsWith('http'));
-      if (code === 0 && url) {
-        urlCache.set(videoId, { url, at: Date.now() });
-        resolve(url);
-      } else reject(new Error(err.trim().split('\n').pop() || `yt-dlp exited with ${code}`));
+      if (code === 0 && url) resolve(url);
+      else reject(new Error(err.trim().split('\n').filter(Boolean).slice(-2).join(' ') || `yt-dlp exited with ${code}`));
     });
   });
 }
-
+async function resolveStream(videoId) {
+  const hit = urlCache.get(videoId);
+  if (hit && Date.now() - hit.at < 20 * 60 * 1000) return hit.url;
+  let url;
+  try {
+    url = await runYtDlp(videoId, false);
+  } catch (first) {
+    try { url = await runYtDlp(videoId, true); } catch (second) { throw new Error(String(first.message).slice(0, 160)); }
+  }
+  urlCache.set(videoId, { url, at: Date.now() });
+  return url;
+}
 
 // ---------- self-update (downloads only the app code, a few MB, not the whole .exe) ----------
 const cmpVer = (a, b) => {

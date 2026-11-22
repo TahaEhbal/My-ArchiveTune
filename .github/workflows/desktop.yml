@@ -40,9 +40,12 @@ jobs:
           mkdir -p bin
           curl -fsSL -o bin/yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
           ./bin/yt-dlp.exe --version
-      - name: Check yt-dlp can resolve a stream
-        run: ./bin/yt-dlp.exe -f "bestaudio[ext=m4a]/bestaudio" -g --no-warnings "https://music.youtube.com/watch?v=dQw4w9WgXcQ" | head -c 80
-        continue-on-error: true
+      - name: Check yt-dlp works with Electron as its JS engine and no Node on PATH
+        run: |
+          export ELECTRON_RUN_AS_NODE=1
+          exe="$(pwd)/node_modules/electron/dist/electron.exe"
+          noNodePath="$(echo "$PATH" | tr ':' '\n' | grep -vi nodejs | paste -sd:)"
+          PATH="$noNodePath" ./bin/yt-dlp.exe -f "bestaudio[ext=m4a]/bestaudio/best" -g --no-warnings --js-runtimes "node:$exe" "https://music.youtube.com/watch?v=dQw4w9WgXcQ" | head -c 100
       - name: Set version
         run: npm version "0.1.${{ github.run_number }}" --no-git-tag-version
       - name: Build portable exe
