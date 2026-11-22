@@ -203,6 +203,7 @@ window.api.onUpdate((m) => {
   const box = $('update');
   if (m.state === 'downloading') box.textContent = `Downloading update ${m.version} (${m.mb} MB)…`;
   else if (m.state === 'ready') { box.innerHTML = `<button id="restart">Update ${m.version} ready – restart</button>`; $('restart').onclick = () => window.api.restart(); }
+  else if (m.state === 'uptodate') box.textContent = 'Up to date';
   else if (m.state === 'error') box.textContent = `Update check failed: ${String(m.message).slice(0, 80)}`;
 });
 refreshAccount();

@@ -332,7 +332,7 @@ function run(cmd, args) {
 async function checkForUpdate() {
   try {
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=15`, { headers: { 'User-Agent': 'ArchiveTune-Desktop' } });
-    if (!res.ok) return;
+    if (!res.ok) return sendUpdate({ state: 'error', message: `GitHub answered ${res.status}` });
     let best = null;
     for (const r of await res.json()) {
       const m = /^desktop-v(\d+\.\d+\.\d+)$/.exec(r.tag_name || '');
@@ -340,7 +340,7 @@ async function checkForUpdate() {
       const asset = (r.assets || []).find((a) => a.name === `code-${m[1]}.zip`);
       if (asset && cmpVer(m[1], currentVersion()) > 0 && (!best || cmpVer(m[1], best.v) > 0)) best = { v: m[1], url: asset.browser_download_url, size: asset.size };
     }
-    if (!best) return;
+    if (!best) return sendUpdate({ state: 'uptodate', version: currentVersion() });
     if (fs.existsSync(path.join(userData(), 'code-staged', 'version.txt')) &&
         fs.readFileSync(path.join(userData(), 'code-staged', 'version.txt'), 'utf8').trim() === best.v) {
       return sendUpdate({ state: 'ready', version: best.v });
@@ -405,6 +405,9 @@ ipcMain.handle('app:restart', async () => {
 app.whenReady().then(() => {
   loadCookies();
   createWindow();
-  mainWindow.webContents.once('did-finish-load', () => setTimeout(checkForUpdate, 3000));
+  mainWindow.webContents.once('did-finish-load', () => {
+    setTimeout(checkForUpdate, 3000);
+    setInterval(checkForUpdate, 20 * 60 * 1000);
+  });
 });
 app.on('window-all-closed', () => app.quit());
