@@ -331,7 +331,7 @@ function run(cmd, args) {
 
 async function checkForUpdate() {
   try {
-    const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=15`, { headers: { 'User-Agent': 'ArchiveTune-Desktop' } });
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`, { headers: { 'User-Agent': 'ArchiveTune-Desktop' } });
     if (!res.ok) return sendUpdate({ state: 'error', message: `GitHub answered ${res.status}` });
     let best = null;
     for (const r of await res.json()) {
