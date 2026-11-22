@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
+const http = require('http');
 
 const REPO = 'TahaEhbal/My-ArchiveTune';
 const { parseBrowse, findContinuation: findCont, idsFromRuns, hires } = require('./parse');
@@ -389,6 +390,61 @@ function resolveStream(videoId, prio = 'user', meta) {
   inflight.set(videoId, job);
   return job;
 }
+
+// ---------- play while downloading ----------
+// A tiny local web server hands the player the song while yt-dlp is still writing it, so playback
+// starts after the first few seconds instead of after the whole download.
+const live = new Map(); // id -> { done, err }
+let liveServer = null, livePort = 0;
+const MIME = { m4a: 'audio/mp4', mp4: 'audio/mp4', webm: 'audio/webm', opus: 'audio/ogg', ogg: 'audio/ogg', mp3: 'audio/mpeg' };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function startLiveServer() {
+  if (liveServer) return Promise.resolve(livePort);
+  return new Promise((resolve) => {
+    liveServer = http.createServer(async (req, res) => {
+      const id = decodeURIComponent((req.url || '').split('?')[0].replace(/^\/s\//, ''));
+      const st = live.get(id);
+      let closed = false;
+      res.on('close', () => { closed = true; });
+      if (!st || !/^[\w-]{11}$/.test(id)) { res.statusCode = 404; return res.end(); }
+      let file = null;
+      for (let i = 0; i < 400 && !closed && !file; i++) {
+        file = cachedFile(id);
+        if (!file) { if (st.done || st.err) break; await sleep(100); }
+      }
+      if (!file || closed) { res.destroy(); return; }
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(file).slice(1).toLowerCase()] || 'audio/mp4', 'Cache-Control': 'no-store' });
+      let fd;
+      try { fd = fs.openSync(file, 'r'); } catch { res.destroy(); return; }
+      let pos = 0;
+      try {
+        while (!closed) {
+          const size = fs.fstatSync(fd).size;
+          if (pos < size) {
+            const buf = Buffer.alloc(Math.min(size - pos, 262144));
+            const n = fs.readSync(fd, buf, 0, buf.length, pos);
+            pos += n;
+            if (!res.write(buf.subarray(0, n))) await new Promise((r) => res.once('drain', r));
+          } else if (st.err) { res.destroy(); break; }
+          else if (st.done) { res.end(); break; }
+          else await sleep(80);
+        }
+      } catch { try { res.destroy(); } catch { /* gone */ } }
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+    });
+    liveServer.listen(0, '127.0.0.1', () => { livePort = liveServer.address().port; resolve(livePort); });
+  });
+}
+async function streamLive(videoId, meta) {
+  const existing = cachedFile(videoId);
+  if (existing && !procs.has(videoId) && !inflight.has(videoId)) return { url: await resolveStream(videoId, 'user', meta), live: false };
+  const port = await startLiveServer();
+  const st = { done: false, err: null };
+  live.set(videoId, st);
+  resolveStream(videoId, 'user', meta).then(() => { st.done = true; }, (e) => { st.err = e; st.done = true; });
+  return { url: `http://127.0.0.1:${port}/s/${videoId}`, live: true };
+}
+ipcMain.handle('yt:streamLive', wrap((id, meta) => streamLive(id, meta)));
 
 // ---------- self-update (downloads only the app code, a few MB, not the whole .exe) ----------
 const cmpVer = (a, b) => {

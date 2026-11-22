@@ -462,6 +462,35 @@ async function urlFor(song, prio = 'user') {
   return r.data;
 }
 
+// Start playing while the song is still downloading; when the download finishes, swap to the saved file
+// (same position) so seeking works. If the live stream can't start, wait for the full download instead.
+let liveStarting = false;
+const durOf = () => (Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : (state.queue[state.index]?.duration || 0));
+async function startAudio(song) {
+  const r = await window.api.streamLive(song.id, metaOf(song));
+  if (!r.ok) throw new Error(r.error);
+  if (!r.data.live) { audio.src = r.data.url; await audio.play(); return; }
+  liveStarting = true;
+  try {
+    audio.src = r.data.url;
+    await Promise.race([audio.play(), new Promise((_, rej) => setTimeout(() => rej(new Error('live start timed out')), 60000))]);
+  } catch (e) {
+    if (state.queue[state.index]?.id !== song.id) { liveStarting = false; return; }
+    const file = await urlFor(song); // waits for the whole download; throws the real error if it failed
+    audio.src = file;
+    await audio.play();
+    liveStarting = false;
+    return;
+  }
+  liveStarting = false;
+  urlFor(song).then((file) => {
+    if (state.queue[state.index]?.id !== song.id || audio.src === file) return;
+    const t = audio.currentTime, playing = !audio.paused;
+    audio.src = file;
+    audio.addEventListener('loadedmetadata', () => { audio.currentTime = t; if (playing) audio.play().catch(() => {}); }, { once: true });
+  }).catch(() => {});
+}
+
 async function playCurrent() {
   const song = state.queue[state.index];
   if (!song) return;
@@ -477,9 +506,8 @@ async function playCurrent() {
   if (!$('lyrics').hidden) loadLyrics(song);
   try {
     setStatus('Loading song…');
-    audio.src = await urlFor(song);
+    await startAudio(song);
     setStatus('');
-    await audio.play();
     failStreak = 0;
     pickedByUser = false;
     if ('mediaSession' in navigator) {
@@ -573,6 +601,7 @@ audio.addEventListener('ended', () => {
   next(true);
 });
 audio.addEventListener('error', () => {
+  if (liveStarting) return;
   const song = state.queue[state.index];
   if (!song || !audio.src) return;
   state.failed.add(song.id);
@@ -588,15 +617,16 @@ audio.addEventListener('error', () => {
   next(true);
 });
 audio.addEventListener('timeupdate', () => {
-  if (!audio.duration || seeking) return;
-  $('bar').value = (audio.currentTime / audio.duration) * 1000;
-  $('bar').style.setProperty('--p', (audio.currentTime / audio.duration) * 100 + '%');
+  const dur = durOf();
+  if (!dur || seeking) return;
+  $('bar').value = Math.min(1000, (audio.currentTime / dur) * 1000);
+  $('bar').style.setProperty('--p', Math.min(100, (audio.currentTime / dur) * 100) + '%');
   $('cur').textContent = fmt(audio.currentTime);
-  $('dur').textContent = fmt(audio.duration);
+  $('dur').textContent = fmt(dur);
 });
 let seeking = false;
 $('bar').addEventListener('input', () => { seeking = true; });
-$('bar').addEventListener('change', () => { if (audio.duration) audio.currentTime = ($('bar').value / 1000) * audio.duration; seeking = false; });
+$('bar').addEventListener('change', () => { if (durOf()) audio.currentTime = ($('bar').value / 1000) * durOf(); seeking = false; });
 $('vol').addEventListener('input', () => { audio.volume = $('vol').value / 100; $('vol').style.setProperty('--p', $('vol').value + '%'); });
 $('vol').style.setProperty('--p', '80%');
 audio.volume = 0.8;
@@ -1072,12 +1102,12 @@ async function fullLyrics(s) {
 }
 function fullSync() {
   if ($('full').hidden) return;
-  if (audio.duration && !fSeeking) {
-    $('fbar').value = (audio.currentTime / audio.duration) * 1000;
-    $('fbar').style.setProperty('--p', (audio.currentTime / audio.duration) * 100 + '%');
+  if (durOf() && !fSeeking) {
+    $('fbar').value = Math.min(1000, (audio.currentTime / durOf()) * 1000);
+    $('fbar').style.setProperty('--p', Math.min(100, (audio.currentTime / durOf()) * 100) + '%');
   }
   $('fcur').textContent = fmt(audio.currentTime || 0);
-  $('fdur').textContent = fmt(audio.duration || 0);
+  $('fdur').textContent = fmt(durOf());
   if (!fLines.length) return;
   let idx = -1;
   for (let i = 0; i < fLines.length; i++) { if (fLines[i].t <= audio.currentTime + 0.25) idx = i; else break; }
@@ -1089,7 +1119,7 @@ function fullSync() {
 }
 let fSeeking = false;
 $('fbar').addEventListener('input', () => { fSeeking = true; });
-$('fbar').addEventListener('change', () => { if (audio.duration) audio.currentTime = ($('fbar').value / 1000) * audio.duration; fSeeking = false; });
+$('fbar').addEventListener('change', () => { if (durOf()) audio.currentTime = ($('fbar').value / 1000) * durOf(); fSeeking = false; });
 audio.addEventListener('timeupdate', fullSync);
 audio.addEventListener('play', () => { $('fplay').innerHTML = ic('pause'); });
 audio.addEventListener('pause', () => { $('fplay').innerHTML = ic('play'); });

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('api', {
   playlist: (id) => ipcRenderer.invoke('yt:playlist', id),
   recommended: (force) => ipcRenderer.invoke('yt:recommended', force),
   stream: (videoId, prio, meta) => ipcRenderer.invoke('yt:stream', videoId, prio, meta),
+  streamLive: (videoId, meta) => ipcRenderer.invoke('yt:streamLive', videoId, meta),
   dlAdd: (song) => ipcRenderer.invoke('dl:add', song),
   dlRemove: (id) => ipcRenderer.invoke('dl:remove', id),
   dlList: () => ipcRenderer.invoke('dl:list'),
