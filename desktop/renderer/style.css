@@ -371,3 +371,9 @@ body.fs #fclose { right:22px; top:18px; }
 .set .iconopt.on { border-color:var(--accent); background:rgba(255,255,255,.08); }
 .iconopt img { width:64px; height:64px; border-radius:14px; object-fit:cover; background:var(--panel); }
 .iconopt span { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* small windows: the whole library column scrolls so nothing is out of reach */
+#libcard { overflow-y:auto; scrollbar-width:none; }
+#libcard::-webkit-scrollbar { display:none; }
+#sidelib { flex:none; overflow:visible; margin-right:0; padding-right:0; }
+#side { overflow:hidden; }

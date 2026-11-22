@@ -802,7 +802,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1180, height: 760, minWidth: 480, minHeight: 400, backgroundColor: '#000000', title: 'ArchiveTune', icon: iconFile(),
     // No grey title bar: the page draws its own top edge and Windows overlays just the min/max/close buttons.
-    titleBarStyle: 'hidden', titleBarOverlay: { color: '#000000', symbolColor: '#ffffff', height: 44 },
+    titleBarStyle: 'hidden', titleBarOverlay: { color: '#00000000', symbolColor: '#ffffff', height: 44 },
     show: !process.argv.includes('--hidden'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
