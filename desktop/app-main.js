@@ -728,8 +728,18 @@ function createWindow() {
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1180, height: 760, minWidth: 820, minHeight: 560, backgroundColor: '#000000', title: 'ArchiveTune', icon: path.join(__dirname, 'assets', 'icon.png'),
+    // No grey title bar: the page draws its own top edge and Windows overlays just the min/max/close buttons.
+    titleBarStyle: 'hidden', titleBarOverlay: { color: '#000000', symbolColor: '#ffffff', height: 44 },
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
+  const toggleFs = () => mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  mainWindow.on('enter-full-screen', () => mainWindow.webContents.send('fullscreen', true));
+  mainWindow.on('leave-full-screen', () => mainWindow.webContents.send('fullscreen', false));
+  mainWindow.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'F11') { e.preventDefault(); toggleFs(); }
+  });
+  ipcMain.removeHandler('win:fullscreen');
+  ipcMain.handle('win:fullscreen', () => { toggleFs(); return true; });
   mainWindow.on('close', (e) => {
     if (!quitting && settings.closeToTray && tray) { e.preventDefault(); mainWindow.hide(); }
   });

@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('api', {
   playerState: (s) => ipcRenderer.invoke('player:state', s),
   onMedia: (cb) => ipcRenderer.on('media', (_e, a) => cb(a)),
   onProgress: (cb) => ipcRenderer.on('progress', (_e, m) => cb(m)),
+  toggleFullscreen: () => ipcRenderer.invoke('win:fullscreen'),
+  onFullscreen: (cb) => ipcRenderer.on('fullscreen', (_e, on) => cb(on)),
   version: () => ipcRenderer.invoke('app:version'),
   restart: () => ipcRenderer.invoke('app:restart'),
   onUpdate: (cb) => ipcRenderer.on('update', (_e, msg) => cb(msg)),

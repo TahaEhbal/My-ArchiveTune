@@ -382,7 +382,7 @@ async function refreshAccount() {
   const r = await window.api.authStatus();
   const on = r.ok && r.data.signedIn;
   state.signedIn = on;
-  const cog = `<button class="round" id="cog" title="Settings">${ic('cog')}${cogDot()}</button>`;
+  const cog = `<button class="round" id="fsbtn" title="Full screen (F11)">${ic('win')}</button><button class="round" id="cog" title="Settings">${ic('cog')}${cogDot()}</button>`;
   if (!on) {
     $('account').innerHTML = `<button class="signin" id="in">Sign in</button>${cog}`;
     $('in').onclick = async () => { setStatus('Signing in…'); await window.api.login(); await refreshAccount(); show(state.view || 'home'); };
@@ -407,6 +407,7 @@ async function refreshAccount() {
     });
   }
   $('cog').onclick = () => openRoot(VIEWS.settings(), '');
+  $('fsbtn').onclick = () => window.api.toggleFullscreen();
   loadSideLibrary(on);
 }
 async function signOut() { await window.api.logout(); state.account = null; await refreshAccount(); show('home'); }
@@ -499,6 +500,7 @@ async function playCurrent() {
   $('art').src = song.thumbnail || '';
   setTile('tile-q', song.thumbnail);
   if (typeof fullFill === 'function') fullFill();
+  updateOffsetLabels();
   document.title = `${song.title} · ArchiveTune`;
   highlight();
   refreshLike();
@@ -645,6 +647,25 @@ document.addEventListener('keydown', (e) => {
 
 // ---------- lyrics ----------
 let lyricsState = { id: null, lines: [], idx: -1 };
+// Per-song lyric timing nudge (seconds). Negative = show lyrics earlier, positive = later.
+const offKey = () => 'lyroff:' + (state.queue[state.index]?.id || '');
+const lyrOffset = () => { try { return Number(localStorage.getItem(offKey())) || 0; } catch { return 0; } };
+function adjustOffset(delta) {
+  let v = delta === 0 ? 0 : Math.round((lyrOffset() + delta) * 10) / 10;
+  try { v === 0 ? localStorage.removeItem(offKey()) : localStorage.setItem(offKey(), String(v)); } catch { /* storage unavailable */ }
+  lyricsState.idx = -1; fIdx = -1;
+  updateOffsetLabels();
+  syncLyrics(); fullSync();
+}
+function updateOffsetLabels() {
+  const v = lyrOffset();
+  const t = v === 0 ? 'In sync' : `${v > 0 ? '+' : ''}${v.toFixed(1)}s`;
+  document.querySelectorAll('.offval').forEach((e) => { e.textContent = t; });
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-off]');
+  if (b) adjustOffset(Number(b.dataset.off));
+});
 async function loadLyrics(song) {
   if (!song || lyricsState.id === song.id) return;
   lyricsState = { id: song.id, lines: [], idx: -1 };
@@ -665,7 +686,8 @@ function syncLyrics() {
   const L = lyricsState.lines;
   if (!L.length || $('lyrics').hidden) return;
   let idx = -1;
-  for (let i = 0; i < L.length; i++) { if (L[i].t <= audio.currentTime + 0.25) idx = i; else break; }
+  const off = lyrOffset();
+  for (let i = 0; i < L.length; i++) { if (L[i].t + off <= audio.currentTime + 0.25) idx = i; else break; }
   if (idx === lyricsState.idx) return;
   lyricsState.idx = idx;
   document.querySelectorAll('#lyr-body .ln').forEach((el, i) => el.classList.toggle('cur', i === idx));
@@ -680,7 +702,7 @@ $('lyr').onclick = () => {
 $('lyr-close').onclick = () => { $('lyrics').hidden = true; $('lyr').classList.remove('on'); };
 $('lyr-body').addEventListener('click', (e) => {
   const ln = e.target.closest('.ln');
-  if (ln && lyricsState.lines[Number(ln.dataset.i)]) audio.currentTime = lyricsState.lines[Number(ln.dataset.i)].t;
+  if (ln && lyricsState.lines[Number(ln.dataset.i)]) audio.currentTime = lyricsState.lines[Number(ln.dataset.i)].t + lyrOffset();
 });
 audio.addEventListener('timeupdate', syncLyrics);
 audio.addEventListener('loadedmetadata', () => { if (!$('lyrics').hidden) { lyricsState.id = null; loadLyrics(state.queue[state.index]); } });
@@ -1110,7 +1132,8 @@ function fullSync() {
   $('fdur').textContent = fmt(durOf());
   if (!fLines.length) return;
   let idx = -1;
-  for (let i = 0; i < fLines.length; i++) { if (fLines[i].t <= audio.currentTime + 0.25) idx = i; else break; }
+  const off = lyrOffset();
+  for (let i = 0; i < fLines.length; i++) { if (fLines[i].t + off <= audio.currentTime + 0.25) idx = i; else break; }
   if (idx === fIdx) return;
   fIdx = idx;
   const els = $('flyr').children;
@@ -1129,9 +1152,11 @@ $('fnextb').onclick = () => $('next').click();
 $('frep').onclick = () => { $('repeat').click(); setTimeout(() => $('frep').classList.toggle('on', $('repeat').classList.contains('on')), 0); };
 $('flyr').addEventListener('click', (e) => {
   const l = e.target.closest('.fl');
-  if (l && fLines[Number(l.dataset.i)]) audio.currentTime = fLines[Number(l.dataset.i)].t;
+  if (l && fLines[Number(l.dataset.i)]) audio.currentTime = fLines[Number(l.dataset.i)].t + lyrOffset();
 });
 $('expand').onclick = () => ($('full').hidden ? fullOpen() : fullClose());
 $('art').onclick = fullOpen;
 $('fclose').onclick = fullClose;
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('full').hidden && $('ctx').hidden) fullClose(); });
+
+window.api.onFullscreen((on) => document.body.classList.toggle('fs', on));
