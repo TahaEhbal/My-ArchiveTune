@@ -14,6 +14,37 @@ function shuffle(arr) {
   return a;
 }
 
+// App logos (the same community pack as the phone app's icon picker).
+const APP_ICONS = [["5847", "Sakura", "morieeattonkatsu"], ["104570", "Marin Kitagawa", "raspweed"], ["950492", "Frostwave - Japanese Winter", "Animesh"], ["417667", "Suzume", "Animesh"], ["152487", "Sakura Retro", "morrieeattonkatsu"], ["944391", "pixelart", "BunglonMewing"], ["454033", "Kanade Tune", "BunglonMewing"], ["801991", "Hatsune Miku", "ValteMCPE"], ["720714", "Kawaiitune", "cognitiveshadows03"], ["207115", "Depth", "cognitiveshadows03"], ["692860", "Neon Vibes", "ValteMCPE"], ["712543", "AT6", "DougAlvarenga"], ["955439", "Minecraft", "BunglonMewing"], ["934989", "Ramadhan", "BunglonMewing"], ["399860", "Minecraft Sakura", "Sucuboy_u"]];
+
+// ---------- theme ----------
+let theme = { accent: '#b388ff', dynamic: false };
+try { theme = { ...theme, ...JSON.parse(localStorage.getItem('theme') || '{}') }; } catch { /* defaults */ }
+const saveTheme = () => { try { localStorage.setItem('theme', JSON.stringify(theme)); } catch { /* ignore */ } };
+function rgbToAccent([r, g, b]) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (mx + mn) / 2;
+  if (mx !== mn) {
+    const d = mx - mn;
+    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h *= 60;
+  }
+  return `hsl(${Math.round(h)}, ${Math.round(Math.max(s, 0.55) * 100)}%, 68%)`;
+}
+function applyAccent(color) {
+  document.documentElement.style.setProperty('--accent', color);
+  document.documentElement.style.setProperty('--accent2', color);
+}
+async function accentFromArt(url) {
+  if (!url) return;
+  const r = await window.api.artColor(url);
+  if (r.ok && r.data && theme.dynamic) applyAccent(rgbToAccent(r.data));
+}
+applyAccent(theme.accent);
+
 // ---------- rendering ----------
 state.sections = [];
 const downloaded = new Set();
@@ -59,7 +90,7 @@ function rowHtml(s, si, i, cur) {
     </div>`;
 }
 function cardHtml(c, si, i) {
-  const playable = c.kind === 'album' || c.kind === 'playlist';
+  const playable = c.kind === 'album' || c.kind === 'playlist' || c.kind === 'mix';
   return `<div class="card-i" data-s="${si}" data-i="${i}">
       <div class="cimg">${c.thumbnail ? `<img loading="lazy" src="${esc(c.thumbnail)}" alt="" class="${c.kind === 'artist' ? 'round' : ''}" />` : phHtml(c.title, c.kind === 'artist' ? 'user' : c.kind === 'playlist' ? 'queue' : 'disc')}
       ${playable ? `<button class="cplay" data-play="1" title="Play">${ic('play')}</button>` : ''}</div>
@@ -74,6 +105,8 @@ function heroColor(text) {
 }
 function renderPage(title, page, keepScroll) {
   state.sections = page.sections || [];
+  state.pageTools = null;
+  clearSelection();
   state.sections.forEach((s) => (s.items || []).forEach((it) => { if (it.thumbnail) it.thumbnail = sharp(it.thumbnail); }));
   if (page.header?.thumbnail) page.header.thumbnail = big(page.header.thumbnail);
   $('title').textContent = page.header?.title ? '' : title;
@@ -102,7 +135,10 @@ function renderPage(title, page, keepScroll) {
       const shelf = sec.shelf || (songs.length !== items.length && items.length > 5);
       html += `<div class="sechead"><h3 class="sec">${esc(sec.title)}</h3>${sec.more ? `<button class="pill small" data-goview="${esc(sec.more.view)}">${esc(sec.more.label)}</button>` : ''}${shelf ? `<div class="arrows"><button data-scroll="-1" title="Back">${ic('left')}</button><button data-scroll="1" title="Next">${ic('right')}</button></div>` : ''}</div>`;
     }
-    if (songs.length === items.length && !sec.shelf) html += items.map((s, i) => rowHtml(s, si, i, cur)).join('');
+    if (page.tools && si === 0 && songs.length === items.length && items.length > 1) {
+      state.pageTools = { orig: items, sort: 'default', q: '' };
+      html += `<div class="ptools"><label class="pfind">${ic('search')}<input id="pfilter" placeholder="Find in this playlist" /></label><span class="psort">Sort: ${[['default', 'Default'], ['title', 'Title'], ['artist', 'Artist'], ['dur', 'Length']].map(([k, l]) => `<button class="pill small${k === 'default' ? ' on' : ''}" data-sort="${k}">${l}</button>`).join('')}</span><span class="hint">Ctrl/Shift-click to select several</span></div><div id="rows">${items.map((s, i) => rowHtml(s, si, i, cur)).join('')}</div>`;
+    } else if (songs.length === items.length && !sec.shelf) html += items.map((s, i) => rowHtml(s, si, i, cur)).join('');
     else html += `<div class="shelf">${items.map((c, i) => (c.kind === 'song' ? cardSong(c, si, i) : cardHtml(c, si, i))).join('')}</div>`;
   });
   $('list').innerHTML = html || '<div class="msg">Nothing here yet.</div>';
@@ -164,7 +200,7 @@ const browseDesc = (title, id, params) => ({ title, load: async () => { const p 
 const playlistDesc = (title, id) => ({
   title,
   playlistId: id,
-  load: async () => ({ header: { title, subtitle: '', thumbnail: '' }, kindLabel: 'Playlist', sections: [{ title: '', items: await unwrap(window.api.playlist(id)) }] }),
+  load: async () => ({ tools: true, header: { title, subtitle: '', thumbnail: '' }, kindLabel: 'Playlist', sections: [{ title: '', items: await unwrap(window.api.playlist(id)) }] }),
 });
 
 const VIEWS = {
@@ -183,6 +219,7 @@ const VIEWS = {
       if (rec.ok && rec.data.songs?.length) quick.push({ view: 'recommended', title: 'Recommended for you', icon: 'sync', grad: 't-rec' });
       lists.slice(0, 5).forEach((p) => quick.push({ id: p.id, title: p.title, thumbnail: p.thumbnail, icon: 'queue' }));
       out.push({ quick, items: [] });
+      try { const mixes = await buildMixes(); if (mixes.length) out.push({ title: 'Made for you', shelf: true, items: mixes }); } catch { /* optional */ }
       if (rec.ok && rec.data.songs?.length) out.push({ title: 'Recommended for you', shelf: true, more: { label: 'Show all', view: 'recommended' }, items: rec.data.songs.slice(0, 24) });
       if (lists.length) out.push({ title: 'Your playlists', shelf: true, items: lists.map((p) => ({ kind: 'playlist', id: p.id, title: p.title, artist: p.count ? `Playlist · ${p.count}` : 'Playlist', thumbnail: p.thumbnail })) });
       const recent = dl.ok ? [...dl.data.cached, ...dl.data.downloaded].sort((x, y) => (y.at || 0) - (x.at || 0)).slice(0, 20) : [];
@@ -376,10 +413,17 @@ $('q').addEventListener('input', () => {
     openRoot({
       title: `Results for "${q}"`,
       loading: 'Searching…',
-      load: async () => ({ sections: [{ title: '', items: await unwrap(window.api.search(q)) }] }),
+      load: async () => {
+        let secs = [];
+        try { secs = await unwrap(window.api.searchAll(q)); } catch { /* fall back to plain song search */ }
+        secs = (secs || []).filter((s) => s.items?.length);
+        if (!secs.length) secs = [{ title: '', items: await unwrap(window.api.search(q)) }];
+        return { sections: secs };
+      },
     }, '');
   }, 350);
 });
+$('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(searchTimer); $('q').dispatchEvent(new Event('input')); } });
 
 const isLikedList = (p) => p.id === 'LM' || /^(liked music|your likes?|liked songs)$/i.test(String(p.title).trim());
 // ---------- sidebar library ----------
@@ -446,7 +490,21 @@ async function settingsHtml() {
   return `<div class="set">
     <h3>Account</h3><div class="box">${me}</div>
     <h3>Updates</h3><div class="box"><div class="line"><div class="l"><div>ArchiveTune Desktop ${ver.ok ? 'v' + esc(ver.data) : ''}</div><div class="s">${ustate}</div></div>${u.state === 'ready' ? '<button class="go" data-set="restart">Restart to update</button>' : '<button data-set="check">Check for updates</button>'}</div></div>
-    <h3>App</h3><div class="box"><div class="line"><div class="l"><div>Keep playing in the tray</div><div class="s">Closing the window hides the app instead of quitting</div></div><div class="sw${st.ok && st.data.closeToTray ? ' on' : ''}" data-set="tray"></div></div></div>
+    <h3>App icon</h3><div class="box"><div class="iconpick">
+      <button class="iconopt${!st.ok || !st.data.icon ? ' on' : ''}" data-set="icon:" title="Default"><img src="../assets/icon.png" alt="" /><span>Default</span></button>
+      ${APP_ICONS.map(([id, name, by]) => `<button class="iconopt${st.ok && st.data.icon === id ? ' on' : ''}" data-set="icon:${id}" title="${esc(name)} by ${esc(by)}"><img src="../assets/icons/${id}.png" alt="" loading="lazy" /><span>${esc(name)}</span></button>`).join('')}
+    </div><div class="s" style="padding:0 0 12px">Changes the window, taskbar and tray icon. The .exe file keeps its original icon.</div></div>
+    <h3>Appearance</h3><div class="box">
+      <div class="line"><div class="l"><div>Accent colour</div><div class="s">Buttons, highlights and toggles</div></div><div class="swatches">${['#b388ff', '#1ed760', '#4aa3ff', '#ff6b9a', '#ff9f43', '#ff5a5f'].map((c) => `<button class="swatch${!theme.dynamic && theme.accent === c ? ' on' : ''}" style="background:${c}" data-set="accent:${c}" title="${c}"></button>`).join('')}</div></div>
+      <div class="line"><div class="l"><div>Match the album art</div><div class="s">The accent colour follows the song that's playing</div></div><div class="sw${theme.dynamic ? ' on' : ''}" data-set="dyn"></div></div>
+      <div class="line"><div class="l"><div>Crossfade</div><div class="s">Blend songs into each other (songs already saved on this PC)</div></div><div class="seg">${[0, 3, 6, 9, 12].map((n) => `<button class="${xfade === n ? 'on' : ''}" data-set="xf:${n}">${n ? n + 's' : 'Off'}</button>`).join('')}</div></div>
+    </div>
+    <h3>App</h3><div class="box">
+      <div class="line"><div class="l"><div>Keep playing in the tray</div><div class="s">Closing the window hides the app instead of quitting</div></div><div class="sw${st.ok && st.data.closeToTray ? ' on' : ''}" data-set="tray"></div></div>
+      <div class="line"><div class="l"><div>Start with Windows</div><div class="s">Opens quietly in the tray when you sign in to your PC</div></div><div class="sw${st.ok && st.data.startWithWindows ? ' on' : ''}" data-set="autostart"></div></div>
+      <div class="line"><div class="l"><div>Always on top</div><div class="s">Keep the window above everything else</div></div><div class="sw${st.ok && st.data.alwaysOnTop ? ' on' : ''}" data-set="top"></div></div>
+      <div class="line"><div class="l"><div>Mini player</div><div class="s">A small floating player. Press its corner button to come back</div></div><button data-set="mini">Open</button></div>
+    </div>
     <h3>Storage</h3><div class="box"><div class="line"><div class="l"><div>Downloads</div><div class="s">${saved} MB saved for offline</div></div></div><div class="line"><div class="l"><div>Recently played</div><div class="s">${cached} MB kept automatically</div></div><button class="ghost" data-set="clear">Clear</button></div></div>
   </div>`;
 }
@@ -462,6 +520,17 @@ $('list').addEventListener('click', async (e) => {
   if (k === 'check') { state.update = { state: 'downloading', version: '…', mb: '' }; state.update = {}; window.api.checkUpdate(); toast('Checking for updates…'); return; }
   if (k === 'tray') { const st = await window.api.getSettings(); await window.api.setSettings({ closeToTray: !(st.ok && st.data.closeToTray) }); return renderSettings(); }
   if (k === 'clear') { await window.api.clearCache(); toast('Cleared'); return renderSettings(); }
+  if (k === 'autostart' || k === 'top') {
+    const st = await window.api.getSettings();
+    const key = k === 'top' ? 'alwaysOnTop' : 'startWithWindows';
+    await window.api.setSettings({ [key]: !(st.ok && st.data[key]) });
+    return renderSettings();
+  }
+  if (k === 'mini') return window.api.toggleMini();
+  if (k.startsWith('icon:')) { await window.api.setSettings({ icon: k.slice(5) }); toast('Icon changed'); return renderSettings(); }
+  if (k === 'dyn') { theme.dynamic = !theme.dynamic; saveTheme(); if (theme.dynamic) accentFromArt(state.queue[state.index]?.thumbnail); else applyAccent(theme.accent); return renderSettings(); }
+  if (k.startsWith('accent:')) { theme.accent = k.slice(7); theme.dynamic = false; saveTheme(); applyAccent(theme.accent); return renderSettings(); }
+  if (k.startsWith('xf:')) { xfade = Number(k.slice(3)); try { localStorage.setItem('xfade', String(xfade)); } catch { /* ignore */ } return renderSettings(); }
 });
 
 // ---------- playback (permanent shuffle) ----------
@@ -512,9 +581,67 @@ async function startAudio(song) {
   }).catch(() => {});
 }
 
-async function playCurrent() {
-  const song = state.queue[state.index];
-  if (!song) return;
+// ---------- crossfade ----------
+let xfade = Number((() => { try { return localStorage.getItem('xfade'); } catch { return 0; } })()) || 0; // seconds, 0 = off
+let xf = null;
+const userVol = () => $('vol').value / 100;
+function cancelCrossfade() {
+  if (!xf) return;
+  clearInterval(xf.timer);
+  try { xf.el?.pause(); if (xf.el) xf.el.src = ''; } catch { /* gone */ }
+  xf = null;
+  audio.volume = userVol();
+}
+async function startCrossfade(song, ni) {
+  const mine = (xf = { ni, song, el: null, timer: null });
+  try {
+    const r = await window.api.streamLive(song.id, metaOf(song));
+    if (xf !== mine || !r.ok || r.data.live) { if (xf === mine) xf = null; return; } // only crossfade into songs already saved on disk
+    const el = new Audio(r.data.url);
+    el.volume = 0;
+    await el.play();
+    if (xf !== mine) { el.pause(); return; }
+    mine.el = el;
+    const t0 = performance.now(), span = Math.max(1, xfade - 0.4) * 1000;
+    mine.timer = setInterval(() => {
+      if (xf !== mine) return clearInterval(mine.timer);
+      const p = Math.min(1, (performance.now() - t0) / span);
+      audio.volume = userVol() * (1 - p);
+      el.volume = userVol() * p;
+      if (p >= 1) finishCrossfade();
+    }, 80);
+  } catch { if (xf === mine) xf = null; }
+}
+function finishCrossfade() {
+  if (!xf || !xf.el) return;
+  const { el, ni, song, timer } = xf;
+  clearInterval(timer);
+  const t = el.currentTime;
+  state.history.push(state.index);
+  state.index = ni;
+  showSong(song);
+  highlight();
+  failStreak = 0;
+  const url = el.src;
+  audio.volume = userVol();
+  audio.src = url;
+  audio.addEventListener('loadedmetadata', () => {
+    audio.currentTime = t + 0.12;
+    audio.play().then(() => { el.pause(); el.src = ''; xf = null; preloadAhead(); }).catch(() => { xf = null; });
+  }, { once: true });
+  if ('mediaSession' in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: song.title, artist: song.artist, artwork: song.thumbnail ? [{ src: song.thumbnail }] : [] });
+}
+function maybeCrossfade() {
+  if (!xfade || xf || repeatMode === 'one' || !audio.duration || !Number.isFinite(audio.duration) || audio.duration < xfade * 2 + 6) return;
+  if (audio.duration - audio.currentTime > xfade) return;
+  let ni = state.index + 1;
+  while (ni < state.queue.length && state.failed.has(state.queue[ni].id)) ni++;
+  if (ni >= state.queue.length) return;
+  startCrossfade(state.queue[ni], ni);
+}
+audio.addEventListener('timeupdate', maybeCrossfade);
+
+function showSong(song) {
   $('np-title').textContent = song.title;
   $('np-artist').textContent = song.artist;
   if (song.thumbnail) song.thumbnail = sharp(song.thumbnail);
@@ -527,6 +654,13 @@ async function playCurrent() {
   refreshLike();
   countedFor = null;
   if (!$('lyrics').hidden) loadLyrics(song);
+  if (theme.dynamic) accentFromArt(song.thumbnail);
+}
+async function playCurrent() {
+  const song = state.queue[state.index];
+  if (!song) return;
+  cancelCrossfade();
+  showSong(song);
   try {
     setStatus('Loading song…');
     await startAudio(song);
@@ -618,6 +752,7 @@ $('prev').onclick = prev;
 audio.addEventListener('play', () => ($('play').innerHTML = ic('pause')));
 audio.addEventListener('pause', () => ($('play').innerHTML = ic('play')));
 audio.addEventListener('ended', () => {
+  if (xf) { if (xf.el) finishCrossfade(); return; }
   if (repeatMode === 'one') { audio.currentTime = 0; audio.play(); return; }
   if (repeatMode === 'off' && state.index + 1 >= state.queue.length) { setStatus('Reached the end of the queue'); return; }
   if (sleepAfterSong) { sleepIdx = 0; sleepAfterSong = false; updateSleepLabel(); setStatus('Sleep timer: stopped after song'); return; }
@@ -1065,8 +1200,10 @@ document.addEventListener('contextmenu', (e) => {
 // ---------- tray + media keys ----------
 const reportState = () => {
   const s = state.queue[state.index];
-  window.api.playerState({ title: s?.title || '', artist: s?.artist || '', playing: !audio.paused });
+  window.api.playerState({ title: s?.title || '', artist: s?.artist || '', thumbnail: s?.thumbnail || '', playing: !audio.paused, position: audio.currentTime || 0, duration: durOf() });
 };
+let lastReport = 0;
+audio.addEventListener('timeupdate', () => { const n = Date.now(); if (n - lastReport > 1000) { lastReport = n; reportState(); } });
 audio.addEventListener('play', reportState);
 audio.addEventListener('pause', reportState);
 window.api.onMedia((action) => {
@@ -1181,3 +1318,108 @@ $('fclose').onclick = fullClose;
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('full').hidden && $('ctx').hidden) fullClose(); });
 
 window.api.onFullscreen((on) => document.body.classList.toggle('fs', on));
+
+// ---------- playlist tools: find / sort / select several ----------
+function refreshRows() {
+  const t = state.pageTools;
+  if (!t || !$('rows')) return;
+  const q = t.q.toLowerCase();
+  let items = t.orig.filter((s) => !q || `${s.title} ${s.artist}`.toLowerCase().includes(q));
+  const by = { title: (x, y) => x.title.localeCompare(y.title), artist: (x, y) => (x.artist || '').localeCompare(y.artist || '') || x.title.localeCompare(y.title), dur: (x, y) => (y.duration || 0) - (x.duration || 0) }[t.sort];
+  if (by) items = [...items].sort(by);
+  state.sections[0].items = items;
+  const cur = state.queue[state.index]?.id;
+  $('rows').innerHTML = items.length ? items.map((s, i) => rowHtml(s, 0, i, cur)).join('') : '<div class="msg">No songs match.</div>';
+  clearSelection();
+}
+$('list').addEventListener('input', (e) => {
+  if (e.target.id !== 'pfilter' || !state.pageTools) return;
+  state.pageTools.q = e.target.value.trim();
+  refreshRows();
+});
+$('list').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-sort]');
+  if (!b || !state.pageTools) return;
+  state.pageTools.sort = b.dataset.sort;
+  document.querySelectorAll('[data-sort]').forEach((x) => x.classList.toggle('on', x === b));
+  refreshRows();
+});
+const sel = new Set();
+let selAnchor = -1;
+function clearSelection() { sel.clear(); selAnchor = -1; document.querySelectorAll('.row.sel').forEach((r) => r.classList.remove('sel')); updateSelBar(); }
+function updateSelBar() {
+  let bar = $('selbar');
+  if (!sel.size) { bar?.remove(); return; }
+  if (!bar) { bar = document.createElement('div'); bar.id = 'selbar'; document.body.appendChild(bar); }
+  const plId = nav.current?.playlistId;
+  bar.innerHTML = `<b>${sel.size} selected</b><button data-sel="play">Play</button><button data-sel="queue">Add to queue</button><button data-sel="dl">Download</button>${plId && plId !== 'LM' ? '<button data-sel="rm" class="danger">Remove from playlist</button>' : ''}<button data-sel="clear" class="ghost">Clear</button>`;
+}
+$('list').addEventListener('click', (e) => {
+  if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return;
+  const row = e.target.closest('.row');
+  if (!row) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const rows = [...document.querySelectorAll('#list .row')];
+  const i = rows.indexOf(row);
+  const setRow = (r, on) => { const it = state.sections[Number(r.dataset.s)]?.items[Number(r.dataset.i)]; if (!it) return; on ? sel.add(it.id) : sel.delete(it.id); r.classList.toggle('sel', on); };
+  if (e.shiftKey && selAnchor >= 0) { const [lo, hi] = [Math.min(selAnchor, i), Math.max(selAnchor, i)]; rows.slice(lo, hi + 1).forEach((r) => setRow(r, true)); }
+  else { setRow(row, !row.classList.contains('sel')); selAnchor = i; }
+  updateSelBar();
+}, true);
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-sel]');
+  if (!b) return;
+  const songs = state.sections.flatMap((s) => s.items).filter((x) => x.kind === 'song' && sel.has(x.id));
+  const k = b.dataset.sel;
+  if (k === 'clear') return clearSelection();
+  if (k === 'play') { if (songs.length) playFromList(songs, songs[0].id); return clearSelection(); }
+  if (k === 'queue') { songs.forEach((s) => queueSong(s, false)); return clearSelection(); }
+  if (k === 'dl') { clearSelection(); return downloadMany(songs); }
+  if (k === 'rm') {
+    const plId = nav.current?.playlistId;
+    setStatus(`Removing ${songs.length} songs…`);
+    let bad = 0;
+    for (const s of songs) { const r = await window.api.playlistRemove(plId, s.id); if (!r.ok) bad++; }
+    clearSelection(); setStatus('');
+    toast(bad ? `Removed ${songs.length - bad}, ${bad} failed` : `Removed ${songs.length} songs`);
+    openPage(nav.current, false);
+  }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sel.size && $('ctx').hidden && $('full').hidden) clearSelection(); });
+
+// ---------- Daily Mixes ----------
+const mixKey = () => new Date().toISOString().slice(0, 10);
+async function buildMixes() {
+  try { const c = JSON.parse(localStorage.getItem('mixes') || 'null'); if (c && c.day === mixKey() && c.mixes?.length) return c.mixes; } catch { /* rebuild */ }
+  const [lr, rr] = await Promise.all([window.api.playlist('LM'), window.api.recommended()]);
+  const liked = lr.ok ? lr.data : [];
+  const rec = rr.ok ? rr.data.songs || [] : [];
+  const pool = [...liked, ...rec];
+  const byArtist = new Map();
+  for (const s of pool) {
+    const name = String(s.artist || '').split(/, | & /)[0].trim();
+    if (!name) continue;
+    if (!byArtist.has(name)) byArtist.set(name, new Map());
+    byArtist.get(name).set(s.id, s);
+  }
+  const artists = [...byArtist.entries()].sort((x, y) => y[1].size - x[1].size).slice(0, 16);
+  const mixes = [];
+  for (let m = 0; m < 4; m++) {
+    const mine = artists.filter((_, i) => i % 4 === m);
+    const songs = shuffle([...new Map(mine.flatMap(([, ss]) => [...ss.values()]).map((s) => [s.id, s])).values()]).slice(0, 40);
+    if (songs.length < 8) continue;
+    const names = mine.map(([n]) => n);
+    mixes.push({ kind: 'mix', id: `mix${m + 1}`, title: `Daily Mix ${mixes.length + 1}`, artist: names.slice(0, 3).join(', ') + (names.length > 3 ? ' and more' : ''), thumbnail: songs.find((s) => s.thumbnail)?.thumbnail || '', songs: songs.map(metaOf) });
+  }
+  try { localStorage.setItem('mixes', JSON.stringify({ day: mixKey(), mixes })); } catch { /* storage full */ }
+  return mixes;
+}
+$('list').addEventListener('click', (e) => {
+  const el = e.target.closest('.card-i');
+  const it = el && state.sections[Number(el.dataset.s)]?.items[Number(el.dataset.i)];
+  if (!it || it.kind !== 'mix') return;
+  e.stopImmediatePropagation();
+  const songs = it.songs.map((s) => ({ ...s, kind: 'song' }));
+  if (e.target.closest('[data-play]')) return playFromList(songs, songs[Math.floor(Math.random() * songs.length)].id);
+  openPage({ title: it.title, load: async () => ({ header: { title: it.title, subtitle: it.artist, thumbnail: it.thumbnail }, kindLabel: 'Made for you', sections: [{ title: '', items: songs }] }) });
+}, true);

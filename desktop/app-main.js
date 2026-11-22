@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, Menu, Tray, nativeImage, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Menu, Tray, nativeImage, globalShortcut, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -683,7 +683,19 @@ async function syncRecommended(songs) {
 
 // ---------- tray, close-to-tray, media keys ----------
 const settingsPath = () => path.join(userData(), 'settings.json');
-let settings = { closeToTray: true };
+let settings = { closeToTray: true, startWithWindows: false, alwaysOnTop: false, icon: '' };
+const iconFile = () => {
+  if (/^\d+$/.test(settings.icon || '')) { const f = path.join(__dirname, 'assets', 'icons', `${settings.icon}.png`); if (fs.existsSync(f)) return f; }
+  return path.join(__dirname, 'assets', 'icon.png');
+};
+function applyIcon() {
+  try {
+    const img = nativeImage.createFromPath(iconFile());
+    mainWindow?.setIcon(img);
+    if (miniWindow && !miniWindow.isDestroyed()) miniWindow.setIcon(img);
+    tray?.setImage(img.resize({ width: 32, height: 32 }));
+  } catch { /* keep the old icon */ }
+}
 const loadSettings = () => { try { settings = { ...settings, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) }; } catch { /* defaults */ } };
 const saveSettings = () => { try { fs.writeFileSync(settingsPath(), JSON.stringify(settings)); } catch { /* ignore */ } };
 let tray = null, quitting = false;
@@ -712,7 +724,7 @@ function refreshTray() {
 }
 function setupTray() {
   try {
-    const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 32, height: 32 });
+    const img = nativeImage.createFromPath(iconFile()).resize({ width: 32, height: 32 });
     tray = new Tray(img);
     tray.on('click', showWindow);
     refreshTray();
@@ -721,17 +733,80 @@ function setupTray() {
     try { globalShortcut.register(key, () => sendMedia(action)); } catch { /* key unavailable */ }
   }
 }
-ipcMain.handle('player:state', (_e, s) => { nowPlaying = { ...nowPlaying, ...s }; refreshTray(); });
+// ---------- mini player ----------
+let miniWindow = null;
+function toggleMini() {
+  if (miniWindow && !miniWindow.isDestroyed()) { miniWindow.close(); return; }
+  miniWindow = new BrowserWindow({
+    width: 380, height: 132, resizable: false, maximizable: false, fullscreenable: false, frame: false, alwaysOnTop: true,
+    backgroundColor: '#0c0c0f', title: 'ArchiveTune mini player', icon: iconFile(),
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+  });
+  miniWindow.loadFile(path.join(__dirname, 'renderer', 'mini.html'));
+  miniWindow.webContents.on('did-finish-load', () => miniWindow?.webContents.send('mini:state', nowPlaying));
+  mainWindow?.hide();
+  miniWindow.on('closed', () => { miniWindow = null; showWindow(); });
+}
+ipcMain.handle('win:mini', () => { toggleMini(); return true; });
+ipcMain.handle('mini:action', (_e, a) => { if (a === 'restore') { toggleMini(); } else sendMedia(a); return true; });
+
+function updateThumbar() {
+  try {
+    const icon = (n) => nativeImage.createFromPath(path.join(__dirname, 'assets', `${n}.png`));
+    mainWindow?.setThumbarButtons([
+      { tooltip: 'Previous', icon: icon('tb-prev'), click: () => sendMedia('prev') },
+      { tooltip: nowPlaying.playing ? 'Pause' : 'Play', icon: icon(nowPlaying.playing ? 'tb-pause' : 'tb-play'), click: () => sendMedia('playpause') },
+      { tooltip: 'Next', icon: icon('tb-next'), click: () => sendMedia('next') },
+    ]);
+  } catch { /* taskbar buttons unavailable */ }
+}
+ipcMain.handle('player:state', (_e, s) => {
+  const playingChanged = s.playing !== undefined && s.playing !== nowPlaying.playing;
+  nowPlaying = { ...nowPlaying, ...s };
+  if (miniWindow && !miniWindow.isDestroyed()) miniWindow.webContents.send('mini:state', nowPlaying);
+  if (s.title !== undefined || playingChanged) { refreshTray(); updateThumbar(); }
+});
+
+// ---------- search, suggestions, album-art colour ----------
+async function searchAll(q) {
+  const y = await getYt();
+  const r = await y.actions.execute('/search', { query: q, client: 'YTMUSIC', parse: false });
+  return parseBrowse(r?.data ?? r).sections;
+}
+async function suggest(q) {
+  try {
+    const y = await getYt();
+    const res = await y.music.getSearchSuggestions(q);
+    const out = [];
+    walk(res, (n) => { const t = n?.suggestion?.text ?? n?.suggestion?.toString?.(); if (typeof t === 'string' && t && !out.includes(t)) out.push(t); });
+    return out.slice(0, 7);
+  } catch { return []; }
+}
+async function artColor(url) {
+  try {
+    if (!/^https:\/\/(lh3\.googleusercontent\.com|i\.ytimg\.com|yt3\.ggpht\.com)\//.test(url)) return null;
+    const res = await net.fetch(url);
+    if (!res.ok) return null;
+    const img = nativeImage.createFromBuffer(Buffer.from(await res.arrayBuffer())).resize({ width: 8, height: 8 });
+    const b = img.toBitmap();
+    let r = 0, g = 0, bl = 0, n = 0;
+    for (let i = 0; i + 3 < b.length; i += 4) { bl += b[i]; g += b[i + 1]; r += b[i + 2]; n++; }
+    return n ? [Math.round(r / n), Math.round(g / n), Math.round(bl / n)] : null;
+  } catch { return null; }
+}
+
 
 // ---------- window / IPC ----------
 function createWindow() {
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
-    width: 1180, height: 760, minWidth: 480, minHeight: 400, backgroundColor: '#000000', title: 'ArchiveTune', icon: path.join(__dirname, 'assets', 'icon.png'),
+    width: 1180, height: 760, minWidth: 480, minHeight: 400, backgroundColor: '#000000', title: 'ArchiveTune', icon: iconFile(),
     // No grey title bar: the page draws its own top edge and Windows overlays just the min/max/close buttons.
     titleBarStyle: 'hidden', titleBarOverlay: { color: '#000000', symbolColor: '#ffffff', height: 44 },
+    show: !process.argv.includes('--hidden'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
+  if (settings.alwaysOnTop) mainWindow.setAlwaysOnTop(true);
   const toggleFs = () => mainWindow.setFullScreen(!mainWindow.isFullScreen());
   mainWindow.on('enter-full-screen', () => mainWindow.webContents.send('fullscreen', true));
   mainWindow.on('leave-full-screen', () => mainWindow.webContents.send('fullscreen', false));
@@ -769,10 +844,18 @@ ipcMain.handle('auth:info', wrap(async () => {
   } catch { accountInfo = { name: '', photo: '' }; }
   return accountInfo;
 }));
+function applyLoginItem() {
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!settings.startWithWindows, path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath, args: ['--hidden'] });
+  } catch { /* not supported here */ }
+}
 ipcMain.handle('settings:get', wrap(async () => ({ ...settings })));
 ipcMain.handle('settings:set', wrap(async (patch) => {
-  if (patch && typeof patch.closeToTray === 'boolean') settings.closeToTray = patch.closeToTray;
+  for (const k of ['closeToTray', 'startWithWindows', 'alwaysOnTop']) if (patch && typeof patch[k] === 'boolean') settings[k] = patch[k];
   saveSettings();
+  if (patch && typeof patch.icon === 'string' && /^\d*$/.test(patch.icon)) { settings.icon = patch.icon; saveSettings(); applyIcon(); }
+  applyLoginItem();
+  mainWindow?.setAlwaysOnTop(!!settings.alwaysOnTop);
   return { ...settings };
 }));
 ipcMain.handle('update:check', wrap(async () => { checkForUpdate(); return true; }));
@@ -814,6 +897,10 @@ ipcMain.handle('dl:list', wrap(async () => listSongs()));
 ipcMain.handle('dl:ids', wrap(async () => downloadedIds()));
 ipcMain.handle('yt:syncRecommended', wrap(syncRecommended));
 ipcMain.handle('yt:search', wrap(search));
+ipcMain.handle('yt:searchAll', wrap(searchAll));
+ipcMain.handle('yt:suggest', wrap(suggest));
+ipcMain.handle('img:color', wrap(artColor));
+ipcMain.handle('win:top', wrap(async () => { settings.alwaysOnTop = !settings.alwaysOnTop; saveSettings(); mainWindow?.setAlwaysOnTop(settings.alwaysOnTop); return settings.alwaysOnTop; }));
 ipcMain.handle('yt:library', wrap(library));
 ipcMain.handle('yt:playlist', wrap(playlistSongs));
 ipcMain.handle('yt:recommended', wrap(async (force) => {
@@ -849,6 +936,8 @@ app.whenReady().then(() => {
   loadSettings();
   createWindow();
   setupTray();
+  if (process.argv.includes('--hidden') && !tray) showWindow(); // no tray icon to bring it back from
+  updateThumbar();
   mainWindow.webContents.once('did-finish-load', () => {
     setTimeout(checkForUpdate, 3000);
     setInterval(checkForUpdate, 20 * 60 * 1000);

@@ -27,7 +27,7 @@
       "parse.js",
       "preload.js",
       "renderer/**/*",
-      "assets/icon.png"
+      "assets/**/*"
     ],
     "extraResources": [
       {

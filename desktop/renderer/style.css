@@ -345,3 +345,29 @@ body.fs #fclose { right:22px; top:18px; }
 @media (max-height:560px) and (max-width:640px) { #app { grid-template-rows:1fr 104px; } }
 .pill, .sechead .pill { white-space:nowrap; flex:none; }
 @media (max-width:640px) { #app { grid-template-rows:1fr 118px; } }
+
+/* ---------- playlist tools, selection, settings extras ---------- */
+.ptools { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:6px 0 10px; }
+.pfind { display:flex; align-items:center; gap:8px; background:var(--elev); border-radius:20px; padding:0 14px; height:36px; color:var(--dim); flex:0 1 260px; }
+.pfind .i { width:16px; height:16px; }
+.pfind input { flex:1; min-width:0; background:none; border:0; outline:0; color:var(--text); font-size:13px; }
+.psort { display:flex; align-items:center; gap:6px; color:var(--dim); font-size:13px; }
+.pill.on { background:var(--text); color:#000; }
+.row.sel { background:rgba(255,255,255,.14); box-shadow:inset 3px 0 0 var(--accent); }
+#selbar { position:fixed; left:50%; bottom:108px; transform:translateX(-50%); z-index:9; display:flex; align-items:center; gap:8px; background:#1b1b22; border-radius:30px; padding:8px 12px 8px 18px; box-shadow:0 12px 40px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.08); max-width:94vw; flex-wrap:wrap; justify-content:center; }
+#selbar button { border:0; border-radius:18px; padding:8px 14px; background:var(--text); color:#000; font-weight:700; cursor:pointer; font-size:13px; }
+#selbar button.ghost { background:rgba(255,255,255,.12); color:var(--text); }
+#selbar button.danger { background:#ff6b6b; }
+.swatches, .seg { display:flex; gap:8px; align-items:center; }
+.swatch { width:26px; height:26px; border-radius:50%; border:2px solid transparent; cursor:pointer; padding:0; }
+.swatch.on { border-color:#fff; box-shadow:0 0 0 2px var(--panel); }
+.set .seg button { background:rgba(255,255,255,.1); color:var(--text); padding:7px 12px; border-radius:16px; font-size:13px; }
+.set .seg button.on { background:var(--accent); color:#000; }
+.set .swatch { padding:0; width:26px; height:26px; border-radius:50%; }
+
+.iconpick { display:grid; grid-template-columns:repeat(auto-fill,minmax(92px,1fr)); gap:10px; padding:12px 0 10px; }
+.set .iconopt { background:none; color:var(--text); padding:8px 4px; border-radius:12px; display:flex; flex-direction:column; align-items:center; gap:6px; font-weight:500; font-size:12px; border:2px solid transparent; }
+.set .iconopt:hover { background:rgba(255,255,255,.08); }
+.set .iconopt.on { border-color:var(--accent); background:rgba(255,255,255,.08); }
+.iconopt img { width:64px; height:64px; border-radius:14px; object-fit:cover; background:var(--panel); }
+.iconopt span { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
