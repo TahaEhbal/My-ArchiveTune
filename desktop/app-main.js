@@ -444,7 +444,6 @@ async function streamLive(videoId, meta) {
   resolveStream(videoId, 'user', meta).then(() => { st.done = true; }, (e) => { st.err = e; st.done = true; });
   return { url: `http://127.0.0.1:${port}/s/${videoId}`, live: true };
 }
-ipcMain.handle('yt:streamLive', wrap((id, meta) => streamLive(id, meta)));
 
 // ---------- self-update (downloads only the app code, a few MB, not the whole .exe) ----------
 const cmpVer = (a, b) => {
@@ -820,6 +819,7 @@ ipcMain.handle('yt:recommended', wrap(async (force) => {
   if (r.songs?.length) fs.writeFileSync(file, JSON.stringify({ at: Date.now(), songs: r.songs }));
   return r;
 }));
+ipcMain.handle('yt:streamLive', wrap((id, meta) => streamLive(id, meta)));
 ipcMain.handle('yt:stream', wrap((id, prio, meta) => resolveStream(id, prio, meta)));
 ipcMain.handle('app:version', wrap(async () => currentVersion()));
 ipcMain.handle('app:restart', async () => {

@@ -32,6 +32,8 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Syntax check
         run: npm run check
+      - name: Load test (app starts without crashing)
+        run: node load-test.js
       - name: Smoke test YouTube Music calls
         run: node smoke-test.mjs
         continue-on-error: true
