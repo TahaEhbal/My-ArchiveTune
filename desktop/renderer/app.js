@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const audio = $('audio');
+let failStreak = 0;
 const state = { view: 'search', songs: [], queue: [], index: -1, history: [], failed: new Set() };
 
 const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -119,15 +120,33 @@ async function playCurrent() {
   try {
     audio.src = await urlFor(song);
     await audio.play();
+    failStreak = 0;
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({ title: song.title, artist: song.artist, artwork: song.thumbnail ? [{ src: song.thumbnail }] : [] });
     }
     preloadAhead();
   } catch (e) {
     state.failed.add(song.id);
-    setStatus(`Skipped "${song.title}": ${String(e.message || e).slice(0, 90)}`);
+    failStreak++;
+    const why = String(e.message || e).slice(0, 400);
+    if (failStreak >= 3) {
+      showError(`Stopped after ${failStreak} songs in a row failed. Last error for "${song.title}": ${why}`);
+      return;
+    }
+    setStatus(`Skipped "${song.title}": ${why.slice(0, 120)}`);
     next(true);
   }
+}
+function showError(text) {
+  failStreak = 0;
+  $('np-title').textContent = 'Playback failed';
+  $('np-artist').textContent = '';
+  const box = document.createElement('div');
+  box.className = 'msg';
+  box.style.cssText = 'white-space:pre-wrap;user-select:text;border:1px solid #4a2a2a;border-radius:8px;margin:8px 0;color:#ffb4b4';
+  box.textContent = text;
+  $('list').prepend(box);
+  setStatus('');
 }
 
 // Resolve the next two links in the background so transitions are instant and bad songs show up early.
@@ -172,7 +191,10 @@ audio.addEventListener('error', () => {
   const song = state.queue[state.index];
   if (!song || !audio.src) return;
   state.failed.add(song.id);
-  setStatus(`Couldn't play "${song.title}" (stream refused). Skipping.`);
+  failStreak++;
+  const code = audio.error ? `media error ${audio.error.code}${audio.error.message ? ': ' + audio.error.message : ''}` : 'unknown audio error';
+  if (failStreak >= 3) return showError(`Stopped after ${failStreak} songs failed to play. The link was found but the audio would not load (${code}). Last: "${song.title}"`);
+  setStatus(`Couldn't play "${song.title}" (${code}). Skipping.`);
   next(true);
 });
 audio.addEventListener('timeupdate', () => {
