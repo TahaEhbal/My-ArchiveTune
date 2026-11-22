@@ -727,7 +727,7 @@ ipcMain.handle('player:state', (_e, s) => { nowPlaying = { ...nowPlaying, ...s }
 function createWindow() {
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
-    width: 1180, height: 760, minWidth: 820, minHeight: 560, backgroundColor: '#000000', title: 'ArchiveTune', icon: path.join(__dirname, 'assets', 'icon.png'),
+    width: 1180, height: 760, minWidth: 480, minHeight: 400, backgroundColor: '#000000', title: 'ArchiveTune', icon: path.join(__dirname, 'assets', 'icon.png'),
     // No grey title bar: the page draws its own top edge and Windows overlays just the min/max/close buttons.
     titleBarStyle: 'hidden', titleBarOverlay: { color: '#000000', symbolColor: '#ffffff', height: 44 },
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
