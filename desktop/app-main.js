@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, session, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 
 const REPO = 'TahaEhbal/My-ArchiveTune';
@@ -276,38 +277,63 @@ function ytDlpPath() {
   const dev = path.join(__dirname, 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
   return fs.existsSync(dev) ? dev : 'yt-dlp';
 }
-const urlCache = new Map(); // id -> { url, at }
+// Songs are downloaded by yt-dlp into a cache folder and played from disk. That avoids YouTube's
+// connection-bound links being refused when the player (a different connection) asks for them.
+const cacheDir = () => path.join(userData(), 'audio-cache');
+const inflight = new Map(); // id -> Promise<path>
+const AUDIO_EXT = /\.(m4a|webm|opus|mp3|ogg|mp4)$/i;
+
+function cachedFile(videoId) {
+  try {
+    return fs.readdirSync(cacheDir()).map((f) => path.join(cacheDir(), f)).find((f) => path.basename(f).startsWith(videoId + '.') && AUDIO_EXT.test(f)) || null;
+  } catch { return null; }
+}
+function trimCache() {
+  try {
+    const files = fs.readdirSync(cacheDir()).map((f) => { const p = path.join(cacheDir(), f); const st = fs.statSync(p); return { p, t: st.mtimeMs, n: st.size }; }).sort((x, y) => y.t - x.t);
+    let total = 0;
+    for (const f of files) { total += f.n; if (total > 600 * 1048576) fs.rmSync(f.p, { force: true }); }
+  } catch { /* ignore */ }
+}
+
 function runYtDlp(videoId, useCookies) {
   return new Promise((resolve, reject) => {
+    fs.mkdirSync(cacheDir(), { recursive: true });
     // yt-dlp needs a JavaScript engine to solve YouTube's checks. Use this app's own (Electron
     // behaves like Node when ELECTRON_RUN_AS_NODE is set), so nothing extra has to be installed.
-    const args = ['-f', 'bestaudio[ext=m4a]/bestaudio/best', '-g', '--no-playlist', '--no-warnings',
+    const args = ['-f', 'bestaudio[ext=m4a]/bestaudio/best', '--no-playlist', '--no-warnings', '--no-progress',
+      '--no-part', '-o', path.join(cacheDir(), `${videoId}.%(ext)s`),
       '--js-runtimes', `node:${process.execPath}`];
     if (useCookies && fs.existsSync(cookieTxtPath()) && signedIn()) args.push('--cookies', cookieTxtPath());
     args.push(`https://music.youtube.com/watch?v=${videoId}`);
     const p = spawn(ytDlpPath(), args, { windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
-    let out = '', err = '';
-    p.stdout.on('data', (d) => (out += d));
+    let err = '';
     p.stderr.on('data', (d) => (err += d));
     p.on('error', (e) => reject(new Error(`Could not start yt-dlp: ${e.message}`)));
     p.on('close', (code) => {
-      const url = out.split('\n').map((l) => l.trim()).find((l) => l.startsWith('http'));
-      if (code === 0 && url) resolve(url);
+      const file = cachedFile(videoId);
+      if (code === 0 && file) resolve(file);
       else reject(new Error(err.trim().split('\n').filter(Boolean).slice(-2).join(' ') || `yt-dlp exited with ${code}`));
     });
   });
 }
-async function resolveStream(videoId) {
-  const hit = urlCache.get(videoId);
-  if (hit && Date.now() - hit.at < 20 * 60 * 1000) return hit.url;
-  let url;
-  try {
-    url = await runYtDlp(videoId, false);
-  } catch (first) {
-    try { url = await runYtDlp(videoId, true); } catch (second) { throw new Error(String(first.message).slice(0, 160)); }
-  }
-  urlCache.set(videoId, { url, at: Date.now() });
-  return url;
+
+function resolveStream(videoId) {
+  const existing = cachedFile(videoId);
+  if (existing) { try { fs.utimesSync(existing, new Date(), new Date()); } catch { /* ignore */ } return Promise.resolve(pathToFileURL(existing).href); }
+  if (inflight.has(videoId)) return inflight.get(videoId);
+  const job = (async () => {
+    let file;
+    try {
+      file = await runYtDlp(videoId, false);
+    } catch (first) {
+      try { file = await runYtDlp(videoId, true); } catch { throw new Error(String(first.message).slice(0, 300)); }
+    }
+    trimCache();
+    return pathToFileURL(file).href;
+  })().finally(() => inflight.delete(videoId));
+  inflight.set(videoId, job);
+  return job;
 }
 
 // ---------- self-update (downloads only the app code, a few MB, not the whole .exe) ----------

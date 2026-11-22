@@ -45,7 +45,9 @@ jobs:
           export ELECTRON_RUN_AS_NODE=1
           exe="$(pwd)/node_modules/electron/dist/electron.exe"
           noNodePath="$(echo "$PATH" | tr ':' '\n' | grep -vi nodejs | paste -sd:)"
-          PATH="$noNodePath" ./bin/yt-dlp.exe -f "bestaudio[ext=m4a]/bestaudio/best" -g --no-warnings --js-runtimes "node:$exe" "https://music.youtube.com/watch?v=dQw4w9WgXcQ" | head -c 100
+          mkdir -p dl
+          PATH="$noNodePath" ./bin/yt-dlp.exe -f "bestaudio[ext=m4a]/bestaudio/best" --no-warnings --no-progress --no-part -o "dl/dQw4w9WgXcQ.%(ext)s" --js-runtimes "node:$exe" "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
+          ls -l dl
       - name: Set version
         run: npm version "0.1.${{ github.run_number }}" --no-git-tag-version
       - name: Build portable exe

@@ -121,7 +121,9 @@ async function playCurrent() {
   document.title = `${song.title} · ArchiveTune`;
   highlight();
   try {
+    setStatus('Loading song…');
     audio.src = await urlFor(song);
+    setStatus('');
     await audio.play();
     failStreak = 0;
     pickedByUser = false;
