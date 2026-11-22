@@ -101,11 +101,21 @@
   </div>
 
   <section id="full" hidden>
-    <div id="fbg"></div>
-    <div id="ftop"><b>Now playing</b><button id="fclose" class="ib" title="Close"><svg class="i"><use href="#i-expand"/></svg></button></div>
+    <div id="fbg"></div><div id="fshade"></div>
+    <button id="fclose" class="ib" title="Close (Esc)"><svg class="i"><use href="#i-expand"/></svg></button>
     <div id="fbody">
-      <div id="fleft"><img id="fart" alt="" /><div id="ft"></div><div id="fa"></div></div>
-      <div id="fright"><div class="fcard"><h4>Lyrics</h4><div id="flyr"></div></div><div class="fcard"><h4>Next in queue</h4><div id="fnext"></div></div></div>
+      <div id="fleft">
+        <img id="fart" alt="" />
+        <div id="ft"></div><div id="fa"></div>
+        <div id="fseek"><span id="fcur">0:00</span><input id="fbar" type="range" min="0" max="1000" value="0" /><span id="fdur">0:00</span></div>
+        <div id="fctl">
+          <button id="fprev" class="ib" title="Previous"><svg class="i"><use href="#i-prev"/></svg></button>
+          <button id="fplay" title="Play / pause"><svg class="i"><use href="#i-play"/></svg></button>
+          <button id="fnextb" class="ib" title="Next"><svg class="i"><use href="#i-next"/></svg></button>
+          <button id="frep" class="ib" title="Repeat"><svg class="i"><use href="#i-repeat"/></svg></button>
+        </div>
+      </div>
+      <div id="flyr"></div>
     </div>
   </section>
   <aside id="lyrics" hidden><div id="lyr-head"><b>Lyrics</b> <span id="lyr-src"></span><button id="lyr-close">✕</button></div><div id="lyr-body"></div></aside>

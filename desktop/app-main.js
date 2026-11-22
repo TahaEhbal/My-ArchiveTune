@@ -213,6 +213,8 @@ async function playlistSongs(id) {
       if (n.musicPlaylistShelfRenderer) shelves.push(n.musicPlaylistShelfRenderer);
       if (n.musicPlaylistShelfContinuation) shelves.push(n.musicPlaylistShelfContinuation);
     });
+    // Newer continuation replies carry the songs in appendContinuationItemsAction instead of a shelf.
+    if (!shelves.length && page > 0) shelves.push({ contents: data });
     if (!shelves.length) break;
     let tok = null;
     for (const shelf of shelves) {
@@ -222,7 +224,7 @@ async function playlistSongs(id) {
           if (s) songs.push(s);
         }
       });
-      tok = tok || findContinuation(shelf);
+      tok = tok || findContinuation(shelf.contents === data ? data : shelf);
     }
     if (!tok) break;
     data = await rawBrowse({ continuation: tok }).catch(() => null);

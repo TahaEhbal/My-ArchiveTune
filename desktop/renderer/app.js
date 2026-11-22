@@ -1041,34 +1041,67 @@ $('libcreate').onclick = async () => {
 };
 
 // ---------- full-screen now playing ----------
-function fullOpen() { $('full').hidden = false; fullFill(); }
+let fLines = [], fIdx = -1, fId = null;
+function fullOpen() { $('full').hidden = false; fId = null; fullFill(); }
 function fullClose() { $('full').hidden = true; }
 function fullFill() {
   const s = state.queue[state.index];
   if ($('full').hidden) return;
-  $('full').style.setProperty('--hero', heroColor(s?.title || ''));
   $('fbg').style.backgroundImage = s?.thumbnail ? `url("${s.thumbnail}")` : '';
   $('fart').src = s?.thumbnail || '';
   $('ft').textContent = s?.title || 'Nothing playing';
   $('fa').textContent = s?.artist || '';
-  const next = state.queue.slice(state.index + 1, state.index + 6);
-  $('fnext').innerHTML = next.length ? next.map((n, i) => `<div class="fn" data-k="${state.index + 1 + i}">${n.thumbnail ? `<img src="${esc(n.thumbnail)}" alt="" />` : phHtml(n.title, 'note')}<div><div class="t">${esc(n.title)}</div><div class="a">${esc(n.artist)}</div></div></div>`).join('') : '<div class="msg">Nothing queued</div>';
-  fullLyrics(s);
+  $('fplay').innerHTML = ic(audio.paused ? 'play' : 'pause');
+  $('frep').classList.toggle('on', $('repeat').classList.contains('on'));
+  if (s && s.id !== fId) fullLyrics(s);
 }
 async function fullLyrics(s) {
-  if (!s) return;
-  const id = s.id;
-  $('flyr').textContent = 'Loading lyrics…';
-  const r = await window.api.lyrics({ id, title: s.title, artist: s.artist, duration: s.duration || audio.duration || 0 });
-  if (state.queue[state.index]?.id !== id) return;
-  const t = r.ok ? (r.data.synced.length ? r.data.synced.map((l) => l.text).join('\n') : r.data.plain) : '';
-  $('flyr').textContent = t || 'No lyrics found for this song.';
+  fId = s.id; fLines = []; fIdx = -1;
+  $('full').classList.remove('nolyr');
+  $('flyr').innerHTML = '<div class="fmsg">Loading lyrics…</div>';
+  const r = await window.api.lyrics({ id: s.id, title: s.title, artist: s.artist, duration: s.duration || audio.duration || 0 });
+  if (fId !== s.id) return;
+  if (r.ok && r.data.synced.length) {
+    fLines = r.data.synced;
+    $('flyr').innerHTML = fLines.map((l, i) => `<div class="fl" data-i="${i}">${esc(l.text) || '♪'}</div>`).join('');
+  } else if (r.ok && r.data.plain) {
+    $('flyr').innerHTML = `<div class="fmsg">${esc(r.data.plain)}</div>`;
+  } else {
+    $('full').classList.add('nolyr');
+  }
 }
+function fullSync() {
+  if ($('full').hidden) return;
+  if (audio.duration && !fSeeking) {
+    $('fbar').value = (audio.currentTime / audio.duration) * 1000;
+    $('fbar').style.setProperty('--p', (audio.currentTime / audio.duration) * 100 + '%');
+  }
+  $('fcur').textContent = fmt(audio.currentTime || 0);
+  $('fdur').textContent = fmt(audio.duration || 0);
+  if (!fLines.length) return;
+  let idx = -1;
+  for (let i = 0; i < fLines.length; i++) { if (fLines[i].t <= audio.currentTime + 0.25) idx = i; else break; }
+  if (idx === fIdx) return;
+  fIdx = idx;
+  const els = $('flyr').children;
+  for (let i = 0; i < els.length; i++) { els[i].classList.toggle('cur', i === idx); els[i].classList.toggle('past', i < idx); }
+  els[idx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+let fSeeking = false;
+$('fbar').addEventListener('input', () => { fSeeking = true; });
+$('fbar').addEventListener('change', () => { if (audio.duration) audio.currentTime = ($('fbar').value / 1000) * audio.duration; fSeeking = false; });
+audio.addEventListener('timeupdate', fullSync);
+audio.addEventListener('play', () => { $('fplay').innerHTML = ic('pause'); });
+audio.addEventListener('pause', () => { $('fplay').innerHTML = ic('play'); });
+$('fplay').onclick = () => $('play').click();
+$('fprev').onclick = () => $('prev').click();
+$('fnextb').onclick = () => $('next').click();
+$('frep').onclick = () => { $('repeat').click(); setTimeout(() => $('frep').classList.toggle('on', $('repeat').classList.contains('on')), 0); };
+$('flyr').addEventListener('click', (e) => {
+  const l = e.target.closest('.fl');
+  if (l && fLines[Number(l.dataset.i)]) audio.currentTime = fLines[Number(l.dataset.i)].t;
+});
 $('expand').onclick = () => ($('full').hidden ? fullOpen() : fullClose());
 $('art').onclick = fullOpen;
 $('fclose').onclick = fullClose;
-$('fnext').addEventListener('click', (e) => {
-  const n = e.target.closest('.fn');
-  if (n) { state.index = Number(n.dataset.k); playCurrent(); }
-});
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('full').hidden && $('ctx').hidden) fullClose(); });
