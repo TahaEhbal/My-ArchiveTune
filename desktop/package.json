@@ -26,7 +26,7 @@
       "app-main.js",
       "preload.js",
       "renderer/**/*",
-      "build/icon.png"
+      "assets/icon.png"
     ],
     "extraResources": [
       {
@@ -39,7 +39,7 @@
         "portable"
       ],
       "artifactName": "ArchiveTune-Desktop-${version}.exe",
-      "icon": "build/icon.ico"
+      "icon": "assets/icon.ico"
     }
   }
 }
