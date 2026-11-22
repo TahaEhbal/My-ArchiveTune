@@ -16,6 +16,8 @@ function shuffle(arr) {
 
 // ---------- rendering ----------
 state.sections = [];
+const downloaded = new Set();
+const refreshDownloaded = async () => { const r = await window.api.dlIds(); if (r.ok) { downloaded.clear(); r.data.forEach((x) => downloaded.add(x)); } };
 const KIND_LABEL = { album: 'Album', artist: 'Artist', playlist: 'Playlist', mood: '', page: '' };
 
 const ic = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
@@ -23,7 +25,7 @@ function rowHtml(s, si, i, cur) {
   return `<div class="row${s.id === cur ? ' playing' : ''}" data-s="${si}" data-i="${i}">
       <div class="n"><span>${i + 1}</span>${ic('play')}</div>
       <div class="m"><img loading="lazy" src="${esc(s.thumbnail)}" alt="" /><div style="min-width:0"><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div></div>
-      <div class="d">${s.duration ? fmt(s.duration) : ''}</div>
+      <div class="d">${downloaded.has(s.id) ? `<span class="dlmark" title="Downloaded">${ic('check')}</span>` : ''}${s.duration ? fmt(s.duration) : ''}</div>
     </div>`;
 }
 function cardHtml(c, si, i) {
@@ -51,7 +53,7 @@ function renderPage(title, page) {
     html += `<div class="phead">${page.header.thumbnail ? `<img src="${esc(page.header.thumbnail)}" alt="" />` : ''}<div><div class="pk">${esc(page.kindLabel || '')}</div><div class="pt">${esc(page.header.title)}</div><div class="a">${esc(page.header.subtitle || '')}</div></div></div>`;
   }
   if (allSongs.length && (page.header?.title || state.sections.length === 1)) {
-    html += `<div class="actions"><button class="bigplay" data-playall="1" title="Shuffle play">${ic('play')}</button><span class="hint">Shuffle play · ${allSongs.length} songs</span></div>`;
+    html += `<div class="actions"><button class="bigplay" data-playall="1" title="Shuffle play">${ic('play')}</button><button class="pill" data-dlall="1" title="Save these songs for offline">${ic('download')} Download</button>${page.syncable ? `<button class="pill" data-sync="1" title="Create or update this playlist on your YouTube account">${ic('sync')} Sync to my account</button>` : ''}<span class="hint">${allSongs.length} songs</span></div>`;
   }
   state.sections.forEach((sec, si) => {
     const items = sec.items.map((it) => ({ ...it, kind: it.kind || 'song' }));
@@ -66,6 +68,9 @@ function renderPage(title, page) {
   });
   $('list').innerHTML = html || '<div class="msg">Nothing here yet.</div>';
   $('scroll').scrollTop = 0;
+  if (nav.current?.id === 'queue') {
+    document.querySelectorAll('#list .row').forEach((r, n) => { if (n > 0) r.draggable = true; }); // the playing song stays on top
+  }
 }
 function cardSong(c, si, i) {
   return `<div class="card-i" data-s="${si}" data-i="${i}">
@@ -143,7 +148,20 @@ const VIEWS = {
       };
     },
   }),
-  queue: () => ({ title: 'Queue (always shuffled)', load: async () => ({ sections: [{ title: '', items: state.queue.slice(Math.max(0, state.index)) }] }) }),
+  downloads: () => ({
+    title: 'Downloads',
+    load: async () => {
+      await refreshDownloaded();
+      const d = await unwrap(window.api.dlList());
+      const mk = (s) => ({ kind: 'song', id: s.id, title: s.title || s.id, artist: s.artist || '', thumbnail: s.thumbnail || '', duration: s.duration || 0, artistId: s.artistId, albumId: s.albumId });
+      const sections = [];
+      if (d.downloaded.length) sections.push({ title: `Downloaded · ${(d.downloaded.reduce((n, s) => n + s.size, 0) / 1048576).toFixed(0)} MB`, items: d.downloaded.map(mk) });
+      if (d.cached.length) sections.push({ title: 'Played recently (saved automatically)', items: d.cached.map(mk) });
+      if (!sections.length) return { error: 'Nothing saved yet. Right-click a song and choose Download, or press Download on any album or playlist. Songs you play are also kept here automatically, so they work offline.' };
+      return { sections };
+    },
+  }),
+  queue: () => ({ id: 'queue', title: 'Queue (always shuffled)', load: async () => ({ sections: [{ title: '', items: state.queue.slice(Math.max(0, state.index)) }] }) }),
   library: () => ({
     title: 'Library',
     load: async () => {
@@ -158,7 +176,7 @@ const VIEWS = {
     load: async () => {
       const d = await unwrap(window.api.recommended());
       if (d.error) return { error: d.error };
-      return { title: `Recommended for you (${d.songs.length})`, sections: [{ title: '', items: d.songs }] };
+      return { title: `Recommended for you (${d.songs.length})`, syncable: true, sections: [{ title: '', items: d.songs }] };
     },
   }),
 };
@@ -170,6 +188,20 @@ $('list').addEventListener('click', async (e) => {
   if (scrollBtn) {
     const shelf = scrollBtn.closest('.sechead').nextElementSibling;
     shelf?.scrollBy({ left: Number(scrollBtn.dataset.scroll) * 600 });
+    return;
+  }
+  if (e.target.closest('[data-dlall]')) {
+    const songs = state.sections.flatMap((s) => s.items).filter((x) => x.kind === 'song');
+    return downloadMany(songs);
+  }
+  if (e.target.closest('[data-sync]')) {
+    const songs = state.sections.flatMap((s) => s.items).filter((x) => x.kind === 'song');
+    setStatus('Syncing to your account…');
+    const r = await window.api.syncRecommended(songs.map(metaOf));
+    setStatus('');
+    if (!r.ok) return toast(`Couldn't sync: ${r.error.slice(0, 100)}`);
+    toast(r.data.created ? `Created "Recommended for you" on your account (${r.data.added} songs)` : `Synced: ${r.data.added} added, ${r.data.removed} removed`);
+    loadSideLibrary(true);
     return;
   }
   if (e.target.closest('[data-playall]')) {
@@ -200,6 +232,41 @@ $('list').addEventListener('click', async (e) => {
   }
   if (item.kind === 'playlist') return openPage(playlistDesc(item.title, item.id));
   openPage(browseDesc(item.title, item.id, item.params));
+});
+
+// Drag rows to reorder the queue.
+let dragFrom = null;
+$('list').addEventListener('dragstart', (e) => {
+  const row = e.target.closest('.row');
+  if (!row || nav.current?.id !== 'queue') return;
+  dragFrom = Number(row.dataset.i);
+  row.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+});
+$('list').addEventListener('dragover', (e) => {
+  const row = e.target.closest('.row');
+  if (dragFrom === null || !row) return;
+  e.preventDefault();
+  document.querySelectorAll('.dropbefore, .dropafter').forEach((x) => x.classList.remove('dropbefore', 'dropafter'));
+  const r = row.getBoundingClientRect();
+  row.classList.add(e.clientY < r.top + r.height / 2 ? 'dropbefore' : 'dropafter');
+});
+$('list').addEventListener('drop', (e) => {
+  const row = e.target.closest('.row');
+  if (dragFrom === null || !row) return;
+  e.preventDefault();
+  const r = row.getBoundingClientRect();
+  let to = Number(row.dataset.i) + (e.clientY < r.top + r.height / 2 ? 0 : 1);
+  const off = Math.max(0, state.index);
+  const [moved] = state.queue.splice(off + dragFrom, 1);
+  if (dragFrom < to) to--;
+  state.queue.splice(off + Math.max(1, to), 0, moved); // never above the playing song
+  dragFrom = null;
+  openPage(nav.current, false);
+});
+$('list').addEventListener('dragend', () => {
+  dragFrom = null;
+  document.querySelectorAll('.dragging, .dropbefore, .dropafter').forEach((x) => x.classList.remove('dragging', 'dropbefore', 'dropafter'));
 });
 
 // Start downloading a song when the pointer rests on it, so clicking it starts sooner.
@@ -263,8 +330,9 @@ function playFromList(songs, pickedId) {
   playCurrent();
 }
 
+const metaOf = (s) => ({ id: s.id, title: s.title, artist: s.artist, thumbnail: s.thumbnail, duration: s.duration, artistId: s.artistId, albumId: s.albumId });
 async function urlFor(song, prio = 'user') {
-  const r = await window.api.stream(song.id, prio);
+  const r = await window.api.stream(song.id, prio, metaOf(song));
   if (!r.ok) throw new Error(r.error);
   return r.data;
 }
@@ -354,6 +422,17 @@ function highlight() {
   document.querySelectorAll('.row').forEach((r) => r.classList.toggle('playing', state.sections[Number(r.dataset.s)]?.items[Number(r.dataset.i)]?.id === cur));
 }
 
+// ---------- repeat ----------
+let repeatMode = 'all'; // all = loop the (reshuffled) queue, one = repeat the song, off = stop at the end
+const REPEAT_TITLES = { all: 'Repeat: loop the queue', one: 'Repeat: this song', off: 'Repeat: off (stop at the end)' };
+$('repeat').onclick = () => {
+  repeatMode = repeatMode === 'all' ? 'one' : repeatMode === 'one' ? 'off' : 'all';
+  $('repeat').classList.toggle('on', repeatMode !== 'off');
+  $('rep1').textContent = repeatMode === 'one' ? '1' : '';
+  $('repeat').title = REPEAT_TITLES[repeatMode];
+  toast(REPEAT_TITLES[repeatMode]);
+};
+
 // ---------- controls ----------
 $('play').onclick = () => (audio.paused ? audio.play() : audio.pause());
 $('next').onclick = () => next(false);
@@ -361,6 +440,8 @@ $('prev').onclick = prev;
 audio.addEventListener('play', () => ($('play').innerHTML = ic('pause')));
 audio.addEventListener('pause', () => ($('play').innerHTML = ic('play')));
 audio.addEventListener('ended', () => {
+  if (repeatMode === 'one') { audio.currentTime = 0; audio.play(); return; }
+  if (repeatMode === 'off' && state.index + 1 >= state.queue.length) { setStatus('Reached the end of the queue'); return; }
   if (sleepAfterSong) { sleepIdx = 0; sleepAfterSong = false; updateSleepLabel(); setStatus('Sleep timer: stopped after song'); return; }
   next(true);
 });
@@ -650,6 +731,33 @@ const linkOf = (item) => item.kind === 'song' ? `https://music.youtube.com/watch
   : item.kind === 'artist' ? `https://music.youtube.com/channel/${item.id}`
   : `https://music.youtube.com/browse/${item.id}`;
 
+// --- downloads
+async function downloadMany(songs) {
+  const todo = songs.filter((s) => !downloaded.has(s.id));
+  if (!todo.length) return toast('Already downloaded');
+  let done = 0, failed = 0;
+  for (const s of todo) {
+    setStatus(`Downloading ${done + failed + 1} of ${todo.length}…`);
+    const r = await window.api.dlAdd(metaOf(s));
+    if (r.ok) { done++; downloaded.add(s.id); } else failed++;
+  }
+  setStatus('');
+  toast(failed ? `Downloaded ${done}, ${failed} failed` : `Downloaded ${done} song${done === 1 ? '' : 's'} for offline`);
+  document.querySelectorAll('.row').forEach((r) => {
+    const it = state.sections[Number(r.dataset.s)]?.items[Number(r.dataset.i)];
+    if (it && downloaded.has(it.id) && !r.querySelector('.dlmark')) r.querySelector('.d')?.insertAdjacentHTML('afterbegin', `<span class="dlmark" title="Downloaded">${ic('check')}</span>`);
+  });
+}
+async function removeDownloaded(song) {
+  await window.api.dlRemove(song.id);
+  downloaded.delete(song.id);
+  toast('Removed from downloads');
+  document.querySelectorAll('.row').forEach((r) => {
+    const it = state.sections[Number(r.dataset.s)]?.items[Number(r.dataset.i)];
+    if (it?.id === song.id) r.querySelector('.dlmark')?.remove();
+  });
+}
+
 // --- song actions
 async function playlistSubmenu(song) {
   const r = await window.api.library();
@@ -707,6 +815,14 @@ function songMenu(song) {
   if (plId && plId !== 'LM' && state.sections.some((s) => s.items.some((x) => x.id === song.id))) {
     items.push({ label: 'Remove from this playlist', icon: 'trash', danger: true, action: () => removeFromPlaylist(plId, song) });
   }
+  if (nav.current?.id === 'queue' && state.queue[state.index]?.id !== song.id) {
+    items.push({ label: 'Remove from queue', icon: 'trash', danger: true, action: () => {
+      const at = state.queue.findIndex((x, n) => n > state.index && x.id === song.id);
+      if (at > -1) state.queue.splice(at, 1);
+      openPage(nav.current, false);
+    } });
+  }
+  items.push({ label: downloaded.has(song.id) ? 'Remove download' : 'Download', icon: 'download', action: () => (downloaded.has(song.id) ? removeDownloaded(song) : downloadMany([song])) });
   items.push({ sep: true });
   items.push({ label: 'Start radio', icon: 'radio', action: () => startRadio(song) });
   if (song.artist) items.push({ label: 'Go to artist', icon: 'user', action: () => goArtist(song) });
@@ -746,6 +862,26 @@ document.addEventListener('contextmenu', (e) => {
   }
 });
 
+// ---------- tray + media keys ----------
+const reportState = () => {
+  const s = state.queue[state.index];
+  window.api.playerState({ title: s?.title || '', artist: s?.artist || '', playing: !audio.paused });
+};
+audio.addEventListener('play', reportState);
+audio.addEventListener('pause', reportState);
+window.api.onMedia((action) => {
+  if (action === 'playpause') $('play').click();
+  else if (action === 'next') next(false);
+  else if (action === 'prev') prev();
+});
+
+// ---------- offline ----------
+function showOffline() {
+  setStatus(navigator.onLine ? '' : 'Offline – downloaded and recently played songs still work');
+}
+window.addEventListener('offline', () => { showOffline(); toast("You're offline – opening Downloads"); show('downloads'); });
+window.addEventListener('online', showOffline);
+
 window.api.version().then((r) => { if (r.ok) $('ver').textContent = `· v${r.data}`; });
 window.api.onUpdate((m) => {
   const box = $('update');
@@ -755,5 +891,7 @@ window.api.onUpdate((m) => {
   else if (m.state === 'error') box.textContent = `Update check failed: ${String(m.message).slice(0, 80)}`;
 });
 window.api.onProgress((m) => { if (m.id === state.queue[state.index]?.id && audio.paused) setStatus(`Downloading song… ${m.pct}%`); });
+refreshDownloaded();
 refreshAccount();
-show('home');
+show(navigator.onLine ? 'home' : 'downloads');
+showOffline();

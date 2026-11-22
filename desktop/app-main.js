@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, session, Menu, Tray, nativeImage, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -286,34 +286,43 @@ const cacheDir = () => path.join(userData(), 'audio-cache');
 const inflight = new Map(); // id -> Promise<path>
 const AUDIO_EXT = /\.(m4a|webm|opus|mp3|ogg|mp4)$/i;
 
+const dlDir = () => path.join(userData(), 'downloads');
+const metaPath = () => path.join(userData(), 'songs.json');
 function cachedFile(videoId) {
-  try {
-    return fs.readdirSync(cacheDir()).map((f) => path.join(cacheDir(), f)).find((f) => path.basename(f).startsWith(videoId + '.') && AUDIO_EXT.test(f)) || null;
-  } catch { return null; }
+  for (const dir of [dlDir(), cacheDir()]) { // saved downloads win over the auto-managed cache
+    try {
+      const f = fs.readdirSync(dir).find((n) => n.startsWith(videoId + '.') && AUDIO_EXT.test(n));
+      if (f) return path.join(dir, f);
+    } catch { /* folder missing */ }
+  }
+  return null;
 }
-function trimCache() {
-  try {
-    const files = fs.readdirSync(cacheDir()).map((f) => { const p = path.join(cacheDir(), f); const st = fs.statSync(p); return { p, t: st.mtimeMs, n: st.size }; }).sort((x, y) => y.t - x.t);
-    let total = 0;
-    for (const f of files) { total += f.n; if (total > 600 * 1048576) fs.rmSync(f.p, { force: true }); }
-  } catch { /* ignore */ }
+const readMeta = () => { try { return JSON.parse(fs.readFileSync(metaPath(), 'utf8')); } catch { return {}; } };
+const writeMeta = (m) => { try { fs.writeFileSync(metaPath(), JSON.stringify(m)); } catch { /* ignore */ } };
+function keepMeta(song, extra = {}) {
+  if (!song?.id) return;
+  const m = readMeta();
+  const fields = { id: song.id, title: song.title, artist: song.artist, thumbnail: song.thumbnail, duration: song.duration, artistId: song.artistId, albumId: song.albumId };
+  for (const k of Object.keys(fields)) if (fields[k] === undefined || fields[k] === '') delete fields[k];
+  m[song.id] = { ...m[song.id], ...fields, ...extra, at: Date.now() };
+  writeMeta(m);
 }
 
 const procs = new Map(); // id -> { child, prio }
 
 function cancelPreloads(exceptId) {
   for (const [id, j] of procs) {
-    if (id !== exceptId && j.prio !== 'user') { j.cancelled = true; j.child.kill(); }
+    if (id !== exceptId && j.prio !== 'user' && j.prio !== 'download') { j.cancelled = true; j.child.kill(); }
   }
 }
 
-function runYtDlp(videoId, useCookies, prio) {
+function runYtDlp(videoId, useCookies, prio, dir = cacheDir()) {
   return new Promise((resolve, reject) => {
-    fs.mkdirSync(cacheDir(), { recursive: true });
+    fs.mkdirSync(dir, { recursive: true });
     // yt-dlp needs a JavaScript engine to solve YouTube's checks. Use this app's own (Electron
     // behaves like Node when ELECTRON_RUN_AS_NODE is set), so nothing extra has to be installed.
     const args = ['-f', 'bestaudio[ext=m4a]/bestaudio/best', '--no-playlist', '--no-warnings', '--newline',
-      '--no-part', '-o', path.join(cacheDir(), `${videoId}.%(ext)s`),
+      '--no-part', '-o', path.join(dir, `${videoId}.%(ext)s`),
       '--js-runtimes', `node:${process.execPath}`];
     if (useCookies && fs.existsSync(cookieTxtPath()) && signedIn()) args.push('--cookies', cookieTxtPath());
     args.push(`https://music.youtube.com/watch?v=${videoId}`);
@@ -342,7 +351,7 @@ function runYtDlp(videoId, useCookies, prio) {
   });
 }
 
-function resolveStream(videoId, prio = 'user') {
+function resolveStream(videoId, prio = 'user', meta) {
   const existing = cachedFile(videoId);
   if (existing && !procs.has(videoId)) { try { fs.utimesSync(existing, new Date(), new Date()); } catch { /* ignore */ } return Promise.resolve(pathToFileURL(existing).href); }
   if (prio === 'hover') {
@@ -365,6 +374,7 @@ function resolveStream(videoId, prio = 'user') {
       try { file = await runYtDlp(videoId, true, prio); } catch { throw new Error(String(first.message).slice(0, 300)); }
     }
     trimCache();
+    keepMeta(meta || { id: videoId });
     return pathToFileURL(file).href;
   })().finally(() => inflight.delete(videoId));
   inflight.set(videoId, job);
@@ -545,12 +555,119 @@ async function radio(videoId) {
   return dedupe((up.contents ?? []).map(normalizeSong));
 }
 
+// ---------- offline downloads ----------
+async function downloadSong(song) {
+  fs.mkdirSync(dlDir(), { recursive: true });
+  let file = cachedFile(song.id);
+  if (file && !file.startsWith(dlDir())) { // already played: just move it out of the auto-trimmed cache
+    const dest = path.join(dlDir(), path.basename(file));
+    fs.renameSync(file, dest);
+    file = dest;
+  }
+  if (!file) {
+    try { file = await runYtDlp(song.id, false, 'download', dlDir()); }
+    catch (e) { file = await runYtDlp(song.id, true, 'download', dlDir()).catch(() => { throw e; }); }
+  }
+  keepMeta(song, { pinned: true, size: fs.statSync(file).size });
+  return true;
+}
+function removeDownload(id) {
+  const f = cachedFile(id);
+  if (f && f.startsWith(dlDir())) fs.rmSync(f, { force: true });
+  const m = readMeta();
+  if (m[id]) { m[id].pinned = false; writeMeta(m); }
+  return true;
+}
+function listSongs() {
+  const out = { downloaded: [], cached: [] };
+  for (const v of Object.values(readMeta())) {
+    const f = v.title ? cachedFile(v.id) : null;
+    if (!f) continue;
+    (f.startsWith(dlDir()) ? out.downloaded : out.cached).push({ ...v, size: fs.statSync(f).size });
+  }
+  out.downloaded.sort((a, b) => (b.at || 0) - (a.at || 0));
+  out.cached.sort((a, b) => (b.at || 0) - (a.at || 0));
+  return out;
+}
+const downloadedIds = () => listSongs().downloaded.map((s) => s.id);
+
+// ---------- sync "Recommended for you" to the YouTube account ----------
+async function syncRecommended(songs) {
+  const y = await needSignIn();
+  const TITLE = 'Recommended for you';
+  const ids = [...new Set(songs.map((s) => s.id))];
+  if (!ids.length) throw new Error('Nothing to sync yet');
+  const chunk = (arr, n) => { const o = []; for (let i = 0; i < arr.length; i += n) o.push(arr.slice(i, i + n)); return o; };
+  const lists = await library();
+  const existing = lists.find((p) => p.title.trim().toLowerCase() === TITLE.toLowerCase());
+  if (!existing) {
+    const [first, ...rest] = chunk(ids, 50);
+    const r = await y.playlist.create(TITLE, first);
+    const pid = r?.playlist_id;
+    if (!pid) throw new Error('YouTube did not return the new playlist');
+    for (const c of rest) await y.playlist.addVideos(pid, c);
+    return { created: true, added: ids.length, removed: 0 };
+  }
+  const cur = (await playlistSongs(existing.id)).map((s) => s.id);
+  const want = new Set(ids), have = new Set(cur);
+  const remove = cur.filter((i) => !want.has(i));
+  const add = ids.filter((i) => !have.has(i));
+  for (const c of chunk(remove, 50)) await y.playlist.removeVideos(existing.id, c);
+  for (const c of chunk(add, 50)) await y.playlist.addVideos(existing.id, c);
+  return { created: false, added: add.length, removed: remove.length };
+}
+
+// ---------- tray, close-to-tray, media keys ----------
+const settingsPath = () => path.join(userData(), 'settings.json');
+let settings = { closeToTray: true };
+const loadSettings = () => { try { settings = { ...settings, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) }; } catch { /* defaults */ } };
+const saveSettings = () => { try { fs.writeFileSync(settingsPath(), JSON.stringify(settings)); } catch { /* ignore */ } };
+let tray = null, quitting = false;
+let nowPlaying = { title: '', artist: '', playing: false };
+const sendMedia = (a) => mainWindow?.webContents.send('media', a);
+function showWindow() {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+function refreshTray() {
+  if (!tray) return;
+  tray.setToolTip(nowPlaying.title ? `${nowPlaying.title} – ${nowPlaying.artist}` : 'ArchiveTune');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: nowPlaying.title ? `${nowPlaying.title}` : 'Nothing playing', enabled: false },
+    { type: 'separator' },
+    { label: nowPlaying.playing ? 'Pause' : 'Play', click: () => sendMedia('playpause') },
+    { label: 'Next', click: () => sendMedia('next') },
+    { label: 'Previous', click: () => sendMedia('prev') },
+    { type: 'separator' },
+    { label: 'Open ArchiveTune', click: showWindow },
+    { label: 'Close to tray', type: 'checkbox', checked: settings.closeToTray, click: (i) => { settings.closeToTray = i.checked; saveSettings(); } },
+    { label: 'Quit', click: () => { quitting = true; app.quit(); } },
+  ]));
+}
+function setupTray() {
+  try {
+    const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 20, height: 20 });
+    tray = new Tray(img);
+    tray.on('click', showWindow);
+    refreshTray();
+  } catch { tray = null; }
+  for (const [key, action] of [['MediaPlayPause', 'playpause'], ['MediaNextTrack', 'next'], ['MediaPreviousTrack', 'prev']]) {
+    try { globalShortcut.register(key, () => sendMedia(action)); } catch { /* key unavailable */ }
+  }
+}
+ipcMain.handle('player:state', (_e, s) => { nowPlaying = { ...nowPlaying, ...s }; refreshTray(); });
+
 // ---------- window / IPC ----------
 function createWindow() {
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1180, height: 760, minWidth: 820, minHeight: 560, backgroundColor: '#000000', title: 'ArchiveTune', icon: path.join(__dirname, 'assets', 'icon.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+  });
+  mainWindow.on('close', (e) => {
+    if (!quitting && settings.closeToTray && tray) { e.preventDefault(); mainWindow.hide(); }
   });
   // Googlevideo wants a browser-like Referer/Origin on media requests.
   session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['*://*.googlevideo.com/*'] }, (d, cb) => {
@@ -593,24 +710,37 @@ ipcMain.handle('pl:add', wrap(playlistAdd));
 ipcMain.handle('pl:remove', wrap(playlistRemove));
 ipcMain.handle('pl:create', wrap(playlistCreate));
 ipcMain.handle('yt:radio', wrap(radio));
+ipcMain.handle('dl:add', wrap(downloadSong));
+ipcMain.handle('dl:remove', wrap(removeDownload));
+ipcMain.handle('dl:list', wrap(async () => listSongs()));
+ipcMain.handle('dl:ids', wrap(async () => downloadedIds()));
+ipcMain.handle('yt:syncRecommended', wrap(syncRecommended));
 ipcMain.handle('yt:search', wrap(search));
 ipcMain.handle('yt:library', wrap(library));
 ipcMain.handle('yt:playlist', wrap(playlistSongs));
 ipcMain.handle('yt:recommended', wrap(recommended));
-ipcMain.handle('yt:stream', wrap((id, prio) => resolveStream(id, prio)));
+ipcMain.handle('yt:stream', wrap((id, prio, meta) => resolveStream(id, prio, meta)));
 ipcMain.handle('app:version', wrap(async () => currentVersion()));
 ipcMain.handle('app:restart', async () => {
   const exe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+  quitting = true;
+  app.releaseSingleInstanceLock();
   spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
   app.exit(0);
 });
 
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on('second-instance', showWindow);
+app.on('before-quit', () => { quitting = true; });
+app.on('will-quit', () => globalShortcut.unregisterAll());
 app.whenReady().then(() => {
   loadCookies();
+  loadSettings();
   createWindow();
+  setupTray();
   mainWindow.webContents.once('did-finish-load', () => {
     setTimeout(checkForUpdate, 3000);
     setInterval(checkForUpdate, 20 * 60 * 1000);
   });
 });
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => { if (quitting || !settings.closeToTray || !tray) app.quit(); });
