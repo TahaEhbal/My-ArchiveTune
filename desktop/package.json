@@ -1,0 +1,28 @@
+{
+  "name": "archivetune-desktop",
+  "productName": "ArchiveTune Desktop",
+  "version": "0.1.0",
+  "description": "Personal desktop version of ArchiveTune (YouTube Music player)",
+  "main": "main.js",
+  "author": "Taha",
+  "license": "GPL-3.0",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check renderer/app.js",
+    "dist": "electron-builder --win portable --publish never"
+  },
+  "dependencies": {
+    "youtubei.js": ">=15.0.0"
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.taha.archivetune.desktop",
+    "productName": "ArchiveTune Desktop",
+    "files": ["main.js", "preload.js", "renderer/**/*"],
+    "extraResources": [{ "from": "bin/yt-dlp.exe", "to": "yt-dlp.exe" }],
+    "win": { "target": ["portable"], "artifactName": "ArchiveTune-Desktop-${version}.exe" }
+  }
+}

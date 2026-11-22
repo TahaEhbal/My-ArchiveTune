@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data:; media-src https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>ArchiveTune</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <aside id="side">
+    <h1>ArchiveTune</h1>
+    <input id="q" type="search" placeholder="Search songs…" />
+    <nav>
+      <button data-view="recommended" class="nav">Recommended for you</button>
+      <button data-view="library" class="nav">Library</button>
+      <button data-view="queue" class="nav">Queue</button>
+    </nav>
+    <div id="account"></div>
+    <div class="credit">Made by Taha</div>
+  </aside>
+  <main>
+    <header><h2 id="title">Search</h2><span id="status"></span></header>
+    <div id="list"></div>
+  </main>
+  <footer id="player">
+    <div id="np"><img id="art" alt="" /><div id="meta"><div id="np-title">Nothing playing</div><div id="np-artist"></div></div></div>
+    <div id="controls">
+      <button id="prev" title="Previous">⏮</button>
+      <button id="play" title="Play / pause">▶</button>
+      <button id="next" title="Next">⏭</button>
+    </div>
+    <div id="seek"><span id="cur">0:00</span><input id="bar" type="range" min="0" max="1000" value="0" /><span id="dur">0:00</span></div>
+    <input id="vol" type="range" min="0" max="100" value="80" title="Volume" />
+  </footer>
+  <audio id="audio" preload="auto"></audio>
+  <script src="app.js"></script>
+</body>
+</html>

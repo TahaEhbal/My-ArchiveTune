@@ -1,0 +1,55 @@
+name: Desktop app
+
+# Builds the Windows version of the app (a single portable .exe) and publishes it as a GitHub Release
+# tagged desktop-v0.1.<run number>. Only runs when files under desktop/ change.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'claude/**'
+      - main
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Syntax check
+        run: npm run check
+      - name: Smoke test YouTube Music calls
+        run: node smoke-test.mjs
+        continue-on-error: true
+      - name: Download yt-dlp
+        run: |
+          mkdir -p bin
+          curl -fsSL -o bin/yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+          ./bin/yt-dlp.exe --version
+      - name: Check yt-dlp can resolve a stream
+        run: ./bin/yt-dlp.exe -f "bestaudio[ext=m4a]/bestaudio" -g --no-warnings "https://music.youtube.com/watch?v=dQw4w9WgXcQ" | head -c 80
+        continue-on-error: true
+      - name: Build portable exe
+        run: npx electron-builder --win portable --publish never
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="desktop-v0.1.${{ github.run_number }}"
+          gh release create "$tag" dist/ArchiveTune-Desktop-*.exe \
+            --title "ArchiveTune Desktop 0.1.${{ github.run_number }}" \
+            --notes "Windows portable build. Run the .exe; no install needed." --prerelease

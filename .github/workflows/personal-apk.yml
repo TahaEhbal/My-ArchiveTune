@@ -11,6 +11,9 @@ on:
     branches:
       - 'claude/**'
       - main
+    paths-ignore:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
 
 concurrency:
   group: personal-apk-${{ github.ref }}
