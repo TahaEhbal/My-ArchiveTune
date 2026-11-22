@@ -10,3 +10,7 @@ console.log('first:', first.id, first.title, (first.artists || []).map((a) => a.
 const up = await yt.music.getUpNext(first.id);
 console.log('up next:', (up.contents ?? []).length);
 if (!(up.contents ?? []).length) throw new Error('getUpNext returned nothing');
+const raw = await yt.actions.execute('/browse', { browseId: 'FEmusic_home', client: 'YTMUSIC', parse: false });
+const rd = raw?.data ?? raw;
+console.log('raw browse keys:', Object.keys(rd || {}).join(','));
+if (!rd?.contents) throw new Error('raw browse returned no contents');

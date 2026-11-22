@@ -115,39 +115,98 @@ async function search(q) {
   return dedupe(items.map(normalizeSong));
 }
 
-async function library() {
+// Raw browse helpers: walk YouTube Music's JSON directly so changes to the page layout can't break parsing.
+const runsText = (r) => (r?.runs ?? []).map((x) => x.text).join('');
+function walk(node, fn) {
+  if (Array.isArray(node)) { node.forEach((n) => walk(n, fn)); return; }
+  if (node && typeof node === 'object') {
+    fn(node);
+    for (const k of Object.keys(node)) walk(node[k], fn);
+  }
+}
+async function rawBrowse(args) {
   const y = await getYt();
+  const r = await y.actions.execute('/browse', { ...args, client: 'YTMUSIC', parse: false });
+  return r?.data ?? r;
+}
+const lastThumb = (t) => {
+  const a = t?.musicThumbnailRenderer?.thumbnail?.thumbnails ?? t?.thumbnails ?? [];
+  return a.length ? a[a.length - 1].url : '';
+};
+function songFromRenderer(r) {
+  const id = r.playlistItemData?.videoId ?? r.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId;
+  if (!id || id.length !== 11) return null;
+  const cols = r.flexColumns ?? [];
+  const title = runsText(cols[0]?.musicResponsiveListItemFlexColumnRenderer?.text);
+  const sub = (cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs ?? []).map((x) => x.text);
+  const artist = sub.join('').split(' • ')[0].trim();
+  const fixed = runsText(r.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text);
+  const [m, sec] = fixed.split(':').map(Number);
+  return { id, title, artist, duration: Number.isFinite(m) && Number.isFinite(sec) ? m * 60 + sec : 0, thumbnail: lastThumb(r.thumbnail) };
+}
+function findContinuation(data) {
+  let tok = null;
+  walk(data, (n) => {
+    if (!tok && n.continuationCommand?.token) tok = n.continuationCommand.token;
+    if (!tok && n.nextContinuationData?.continuation) tok = n.nextContinuationData.continuation;
+  });
+  return tok;
+}
+
+async function library() {
   if (!signedIn()) return [];
   const found = new Map();
-  const add = (p) => {
-    const id = p?.id || p?.playlist_id;
-    const title = text(p?.title).trim();
-    if (id && title && !found.has(id)) found.set(id, { id, title, count: text(p.item_count ?? p.video_count ?? p.subtitle) });
+  const add = (id, title, count) => {
+    id = String(id || '').replace(/^VL/, '');
+    title = String(title || '').trim();
+    if (id && title && !found.has(id)) found.set(id, { id, title, count: count || '' });
   };
-  const errors = [];
-  try {
-    const feed = await y.getPlaylists();
-    (feed.playlists ?? feed.contents ?? []).forEach(add);
-  } catch (e) { errors.push(String(e.message || e)); }
-  try {
-    const lib = await y.music.getLibrary();
-    const pl = await lib.getPlaylists?.();
-    (pl?.contents ?? pl?.playlists ?? lib.playlists ?? []).forEach(add);
-  } catch (e) { errors.push(String(e.message || e)); }
-  if (!found.size && errors.length) throw new Error(errors.join(' | '));
+  let data = await rawBrowse({ browseId: 'FEmusic_liked_playlists' });
+  for (let page = 0; page < 10 && data; page++) {
+    walk(data, (n) => {
+      const two = n.musicTwoRowItemRenderer;
+      if (two) {
+        const be = two.navigationEndpoint?.browseEndpoint;
+        if (be?.browseId?.startsWith('VL')) add(be.browseId, runsText(two.title), runsText(two.subtitle));
+      }
+      const li = n.musicResponsiveListItemRenderer;
+      if (li) {
+        const be = li.navigationEndpoint?.browseEndpoint;
+        if (be?.browseId?.startsWith('VL')) add(be.browseId, runsText(li.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text), '');
+      }
+    });
+    const tok = findContinuation(data);
+    if (!tok) break;
+    data = await rawBrowse({ continuation: tok }).catch(() => null);
+  }
   return [...found.values()];
 }
 
 async function playlistSongs(id) {
-  const y = await getYt();
-  const pl = await y.music.getPlaylist(String(id).replace(/^VL/, ''));
-  let all = [...(pl.items ?? [])];
-  let page = pl;
-  while (page.has_continuation && all.length < 2000) {
-    page = await page.getContinuation();
-    all = all.concat(page.items ?? []);
+  const songs = [];
+  let data = await rawBrowse({ browseId: 'VL' + String(id).replace(/^VL/, '') });
+  for (let page = 0; page < 40 && data && songs.length < 4000; page++) {
+    // Only read the playlist's own shelf (not the "Suggestions" shelf below it).
+    const shelves = [];
+    walk(data, (n) => {
+      if (n.musicPlaylistShelfRenderer) shelves.push(n.musicPlaylistShelfRenderer);
+      if (n.musicPlaylistShelfContinuation) shelves.push(n.musicPlaylistShelfContinuation);
+    });
+    if (!shelves.length) break;
+    let tok = null;
+    for (const shelf of shelves) {
+      walk(shelf.contents, (n) => {
+        if (n.musicResponsiveListItemRenderer) {
+          const s = songFromRenderer(n.musicResponsiveListItemRenderer);
+          if (s) songs.push(s);
+        }
+      });
+      tok = tok || findContinuation(shelf);
+    }
+    if (!tok) break;
+    data = await rawBrowse({ continuation: tok }).catch(() => null);
   }
-  return dedupe(all.map(normalizeSong));
+  return dedupe(songs);
 }
 
 // Port of the Android "Recommended for you": seed from "the main playlist", score by how high and how
