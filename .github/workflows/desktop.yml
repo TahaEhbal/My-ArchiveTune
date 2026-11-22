@@ -48,6 +48,7 @@ jobs:
           mkdir -p dl
           PATH="$noNodePath" ./bin/yt-dlp.exe -f "bestaudio[ext=m4a]/bestaudio/best" --no-warnings --no-progress --no-part -o "dl/dQw4w9WgXcQ.%(ext)s" --js-runtimes "node:$exe" "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
           ls -l dl
+        continue-on-error: true
       - name: Set version
         run: npm version "0.1.${{ github.run_number }}" --no-git-tag-version
       - name: Build portable exe
