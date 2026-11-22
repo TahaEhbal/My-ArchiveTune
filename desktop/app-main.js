@@ -297,6 +297,13 @@ function cachedFile(videoId) {
   }
   return null;
 }
+function trimCache() {
+  try {
+    const files = fs.readdirSync(cacheDir()).map((f) => { const p = path.join(cacheDir(), f); const st = fs.statSync(p); return { p, t: st.mtimeMs, n: st.size }; }).sort((x, y) => y.t - x.t);
+    let total = 0;
+    for (const f of files) { total += f.n; if (total > 600 * 1048576) fs.rmSync(f.p, { force: true }); }
+  } catch { /* ignore */ }
+}
 const readMeta = () => { try { return JSON.parse(fs.readFileSync(metaPath(), 'utf8')); } catch { return {}; } };
 const writeMeta = (m) => { try { fs.writeFileSync(metaPath(), JSON.stringify(m)); } catch { /* ignore */ } };
 function keepMeta(song, extra = {}) {
