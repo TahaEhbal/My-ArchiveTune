@@ -74,6 +74,10 @@ function renderPage(title, page, keepScroll) {
     const items = sec.items.map((it) => ({ ...it, kind: it.kind || 'song' }));
     sec.items = items;
     const songs = items.filter((x) => x.kind === 'song');
+    if (sec.quick) {
+      html += `<div class="quick">${sec.quick.map((q) => `<div class="qt" ${q.view ? `data-qv="${esc(q.view)}"` : `data-qpl="${esc(q.id)}" data-qtitle="${esc(q.title)}"`}><span class="qimg${q.grad ? ' ' + q.grad : ''}">${q.thumbnail ? `<img src="${esc(q.thumbnail)}" alt="" />` : ic(q.icon || 'note')}</span><span class="qn">${esc(q.title)}</span></div>`).join('')}</div>`;
+      return;
+    }
     if (sec.title) {
       const shelf = sec.shelf || (songs.length !== items.length && items.length > 5);
       html += `<div class="sechead"><h3 class="sec">${esc(sec.title)}</h3>${sec.more ? `<button class="pill small" data-goview="${esc(sec.more.view)}">${esc(sec.more.label)}</button>` : ''}${shelf ? `<div class="arrows"><button data-scroll="-1" title="Back">${ic('left')}</button><button data-scroll="1" title="Next">${ic('right')}</button></div>` : ''}</div>`;
@@ -118,9 +122,9 @@ async function openPage(desc, push = true) {
     // Slow extras (like Recommended) load after the page is already visible, then slot in at the top.
     desc.after(page).then((sec) => {
       if (!sec || nav.current !== desc) return;
-      page.sections.unshift(sec);
+      page.sections.unshift(...[].concat(sec));
       renderPage(page.title || desc.title, page, true);
-    }).catch(() => {});
+    }).catch((e) => console.error('after failed', e));
   }
 }
 function openRoot(desc, viewName) {
@@ -145,13 +149,25 @@ const playlistDesc = (title, id) => ({
 
 const VIEWS = {
   home: () => {
-    const d = browseDesc('Home', 'FEmusic_home');
+    const h = new Date().getHours();
+    const d = browseDesc(h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening', 'FEmusic_home');
     d.after = async () => {
       const auth = await window.api.authStatus();
       if (!auth.ok || !auth.data.signedIn) return null;
-      const r = await window.api.recommended();
-      if (!r.ok || !r.data.songs?.length) return null;
-      return { title: 'Recommended for you', shelf: true, more: { label: 'Show all', view: 'recommended' }, items: r.data.songs.slice(0, 24) };
+      const [rec, lib, dl] = await Promise.all([window.api.recommended(), window.api.library(), window.api.dlList()]);
+      const out = [];
+      const lists = lib.ok ? lib.data.filter((p) => !isLikedList(p)) : [];
+      const quick = [{ view: 'liked', title: 'Liked songs', icon: 'heart', grad: 't-like' }];
+      const dlFirst = dl.ok ? (dl.data.downloaded[0] || dl.data.cached[0]) : null;
+      quick.push({ view: 'downloads', title: 'Downloads', icon: 'download', thumbnail: dlFirst?.thumbnail });
+      if (rec.ok && rec.data.songs?.length) quick.push({ view: 'recommended', title: 'Recommended for you', icon: 'sync', grad: 't-rec' });
+      lists.slice(0, 5).forEach((p) => quick.push({ id: p.id, title: p.title, thumbnail: p.thumbnail, icon: 'queue' }));
+      out.push({ quick, items: [] });
+      if (rec.ok && rec.data.songs?.length) out.push({ title: 'Recommended for you', shelf: true, more: { label: 'Show all', view: 'recommended' }, items: rec.data.songs.slice(0, 24) });
+      if (lists.length) out.push({ title: 'Your playlists', shelf: true, items: lists.map((p) => ({ kind: 'playlist', id: p.id, title: p.title, artist: p.count ? `Playlist · ${p.count}` : 'Playlist', thumbnail: p.thumbnail })) });
+      const recent = dl.ok ? [...dl.data.cached, ...dl.data.downloaded].sort((x, y) => (y.at || 0) - (x.at || 0)).slice(0, 20) : [];
+      if (recent.length) out.push({ title: 'Recently played', shelf: true, more: { label: 'Show all', view: 'downloads' }, items: recent.map((s) => ({ kind: 'song', id: s.id, title: s.title || s.id, artist: s.artist || '', thumbnail: s.thumbnail || '', duration: s.duration || 0, artistId: s.artistId, albumId: s.albumId })) });
+      return out;
     };
     return d;
   },
@@ -453,6 +469,7 @@ async function playCurrent() {
   $('np-artist').textContent = song.artist;
   $('art').src = song.thumbnail || '';
   setTile('tile-q', song.thumbnail);
+  if (typeof fullFill === 'function') fullFill();
   document.title = `${song.title} · ArchiveTune`;
   highlight();
   refreshLike();
@@ -1002,3 +1019,56 @@ refreshDownloaded();
 refreshAccount();
 show(navigator.onLine ? 'home' : 'downloads');
 showOffline();
+
+$('list').addEventListener('click', (e) => {
+  const q = e.target.closest('.qt');
+  if (!q) return;
+  if (q.dataset.qv) show(q.dataset.qv);
+  else openRoot(playlistDesc(q.dataset.qtitle, q.dataset.qpl), '');
+});
+
+// ---------- sidebar filter + create ----------
+$('libfilter').addEventListener('input', () => {
+  const t = $('libfilter').value.trim().toLowerCase();
+  document.querySelectorAll('#sidelib .sl').forEach((el) => { el.hidden = !!t && !el.dataset.title.toLowerCase().includes(t); });
+});
+$('libcreate').onclick = async () => {
+  const name = await askName('New playlist');
+  if (!name) return;
+  const res = await window.api.playlistCreate(name, null);
+  toast(res.ok ? `Created "${name}"` : 'Could not create the playlist');
+  loadSideLibrary(true);
+};
+
+// ---------- full-screen now playing ----------
+function fullOpen() { $('full').hidden = false; fullFill(); }
+function fullClose() { $('full').hidden = true; }
+function fullFill() {
+  const s = state.queue[state.index];
+  if ($('full').hidden) return;
+  $('full').style.setProperty('--hero', heroColor(s?.title || ''));
+  $('fbg').style.backgroundImage = s?.thumbnail ? `url("${s.thumbnail}")` : '';
+  $('fart').src = s?.thumbnail || '';
+  $('ft').textContent = s?.title || 'Nothing playing';
+  $('fa').textContent = s?.artist || '';
+  const next = state.queue.slice(state.index + 1, state.index + 6);
+  $('fnext').innerHTML = next.length ? next.map((n, i) => `<div class="fn" data-k="${state.index + 1 + i}">${n.thumbnail ? `<img src="${esc(n.thumbnail)}" alt="" />` : phHtml(n.title, 'note')}<div><div class="t">${esc(n.title)}</div><div class="a">${esc(n.artist)}</div></div></div>`).join('') : '<div class="msg">Nothing queued</div>';
+  fullLyrics(s);
+}
+async function fullLyrics(s) {
+  if (!s) return;
+  const id = s.id;
+  $('flyr').textContent = 'Loading lyrics…';
+  const r = await window.api.lyrics({ id, title: s.title, artist: s.artist, duration: s.duration || audio.duration || 0 });
+  if (state.queue[state.index]?.id !== id) return;
+  const t = r.ok ? (r.data.synced.length ? r.data.synced.map((l) => l.text).join('\n') : r.data.plain) : '';
+  $('flyr').textContent = t || 'No lyrics found for this song.';
+}
+$('expand').onclick = () => ($('full').hidden ? fullOpen() : fullClose());
+$('art').onclick = fullOpen;
+$('fclose').onclick = fullClose;
+$('fnext').addEventListener('click', (e) => {
+  const n = e.target.closest('.fn');
+  if (n) { state.index = Number(n.dataset.k); playCurrent(); }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('full').hidden && $('ctx').hidden) fullClose(); });
