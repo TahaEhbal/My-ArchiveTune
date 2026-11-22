@@ -5,7 +5,7 @@ const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 
 const REPO = 'TahaEhbal/My-ArchiveTune';
-const { parseBrowse, findContinuation: findCont } = require('./parse');
+const { parseBrowse, findContinuation: findCont, idsFromRuns } = require('./parse');
 
 const SOURCE_PLAYLIST_NAME = 'the main playlist';
 const COOKIE_DOMAINS = ['.youtube.com', 'youtube.com', '.google.com', 'accounts.google.com', 'music.youtube.com'];
@@ -35,6 +35,8 @@ function normalizeSong(i) {
     artist: artists.join(', ') || text(i.subtitle).split('•')[0].trim(),
     duration: i.duration?.seconds ?? i.duration ?? 0,
     thumbnail: thumb(i.thumbnail ?? i.thumbnails),
+    artistId: i.artists?.find?.((a) => a.channel_id)?.channel_id || i.author?.channel_id || undefined,
+    albumId: i.album?.id || undefined,
   };
 }
 const dedupe = (songs) => {
@@ -154,7 +156,7 @@ function songFromRenderer(r) {
   const artist = sub.join('').split(' • ')[0].trim();
   const fixed = runsText(r.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text);
   const [m, sec] = fixed.split(':').map(Number);
-  return { id, title, artist, duration: Number.isFinite(m) && Number.isFinite(sec) ? m * 60 + sec : 0, thumbnail: lastThumb(r.thumbnail) };
+  return { id, title, artist, duration: Number.isFinite(m) && Number.isFinite(sec) ? m * 60 + sec : 0, thumbnail: lastThumb(r.thumbnail), ...idsFromRuns(cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs, cols[2]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs) };
 }
 function findContinuation(data) {
   let tok = null;
@@ -517,6 +519,32 @@ async function setLiked(id, liked) {
   return liked;
 }
 
+// ---------- playlist editing + radio (used by the right-click menu) ----------
+async function needSignIn() {
+  if (!signedIn()) throw new Error('Sign in first (top right)');
+  return getYt();
+}
+async function playlistAdd(playlistId, videoId) {
+  const y = await needSignIn();
+  await y.playlist.addVideos(playlistId, [videoId]);
+  return true;
+}
+async function playlistRemove(playlistId, videoId) {
+  const y = await needSignIn();
+  await y.playlist.removeVideos(playlistId, [videoId]);
+  return true;
+}
+async function playlistCreate(title, videoId) {
+  const y = await needSignIn();
+  const r = await y.playlist.create(title, videoId ? [videoId] : []);
+  return r?.playlist_id ?? true;
+}
+async function radio(videoId) {
+  const y = await getYt();
+  const up = await y.music.getUpNext(videoId);
+  return dedupe((up.contents ?? []).map(normalizeSong));
+}
+
 // ---------- window / IPC ----------
 function createWindow() {
   Menu.setApplicationMenu(null);
@@ -561,6 +589,10 @@ ipcMain.handle('yt:lyrics', wrap(getLyrics));
 ipcMain.handle('stats:play', wrap(async (song) => recordPlay(song)));
 ipcMain.handle('stats:get', wrap(async () => statsSummary()));
 ipcMain.handle('yt:like', wrap(setLiked));
+ipcMain.handle('pl:add', wrap(playlistAdd));
+ipcMain.handle('pl:remove', wrap(playlistRemove));
+ipcMain.handle('pl:create', wrap(playlistCreate));
+ipcMain.handle('yt:radio', wrap(radio));
 ipcMain.handle('yt:search', wrap(search));
 ipcMain.handle('yt:library', wrap(library));
 ipcMain.handle('yt:playlist', wrap(playlistSongs));

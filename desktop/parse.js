@@ -38,6 +38,18 @@ function browseTarget(nav) {
   return { kind, id: be.browseId, params: be.params };
 }
 
+// Artist / album ids hidden in the clickable parts of a subtitle line.
+function idsFromRuns(...runLists) {
+  const out = {};
+  for (const runs of runLists) for (const r of runs ?? []) {
+    const id = r.navigationEndpoint?.browseEndpoint?.browseId;
+    if (!id) continue;
+    if (id.startsWith('UC') && !out.artistId) out.artistId = id;
+    else if (id.startsWith('MPRE') && !out.albumId) out.albumId = id;
+  }
+  return out;
+}
+
 function songFromListItem(r) {
   const id = r.playlistItemData?.videoId
     ?? r.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId;
@@ -48,7 +60,7 @@ function songFromListItem(r) {
   const artist = sub.split(' • ').filter((p) => !/^(Song|Video|Single|EP|Album)$/i.test(p.trim()))[0]?.trim() ?? '';
   const fixed = runsText(r.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text);
   const [m, s] = fixed.split(':').map(Number);
-  return { kind: 'song', id, title, artist, duration: Number.isFinite(m) && Number.isFinite(s) ? m * 60 + s : 0, thumbnail: lastThumb(r.thumbnail) };
+  return { kind: 'song', id, title, artist, duration: Number.isFinite(m) && Number.isFinite(s) ? m * 60 + s : 0, thumbnail: lastThumb(r.thumbnail), ...idsFromRuns(cols[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs, cols[2]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs) };
 }
 
 function listItem(r) {
@@ -65,7 +77,7 @@ function twoRowItem(r) {
   const subtitle = runsText(r.subtitle);
   const thumbnail = lastThumb(r.thumbnailRenderer);
   const vid = nav?.watchEndpoint?.videoId;
-  if (vid && vid.length === 11) return { kind: 'song', id: vid, title, artist: subtitle.split(' • ').filter((p) => !/^(Song|Video|Single|EP|Album)$/i.test(p.trim()))[0]?.trim() ?? '', duration: 0, thumbnail };
+  if (vid && vid.length === 11) return { kind: 'song', id: vid, title, artist: subtitle.split(' • ').filter((p) => !/^(Song|Video|Single|EP|Album)$/i.test(p.trim()))[0]?.trim() ?? '', duration: 0, thumbnail, ...idsFromRuns(r.subtitle?.runs) };
   const t = browseTarget(nav);
   if (t) return { kind: t.kind, id: t.id, params: t.params, title, artist: subtitle, thumbnail };
   const pl = nav?.watchPlaylistEndpoint?.playlistId;
@@ -144,4 +156,4 @@ function parseBrowse(data) {
   return { header, sections };
 }
 
-module.exports = { parseBrowse, findContinuation, runsText, walk, songFromListItem, lastThumb };
+module.exports = { idsFromRuns, parseBrowse, findContinuation, runsText, walk, songFromListItem, lastThumb };

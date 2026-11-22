@@ -111,6 +111,7 @@ const unwrap = async (p) => { const r = await p; if (!r.ok) throw new Error(r.er
 const browseDesc = (title, id, params) => ({ title, load: async () => { const p = await unwrap(window.api.browse(id, params)); p.kindLabel = /^MPRE|^OLAK/.test(id) ? 'Album' : id.startsWith('UC') ? 'Artist' : ''; return p; } });
 const playlistDesc = (title, id) => ({
   title,
+  playlistId: id,
   load: async () => ({ header: { title, subtitle: '', thumbnail: '' }, kindLabel: 'Playlist', sections: [{ title: '', items: await unwrap(window.api.playlist(id)) }] }),
 });
 
@@ -121,7 +122,12 @@ const VIEWS = {
   newreleases: () => browseDesc('New releases', 'FEmusic_new_releases_albums'),
   moods: () => browseDesc('Moods & genres', 'FEmusic_moods_and_genres'),
   history: () => browseDesc('History', 'FEmusic_history'),
-  liked: () => playlistDesc('Liked songs', 'LM'),
+  liked: () => {
+    const d = playlistDesc('Liked songs', 'LM');
+    const inner = d.load;
+    d.load = async () => { const p = await inner(); p.sections.forEach((s) => s.items.forEach((x) => liked.add(x.id))); return p; };
+    return d;
+  },
   stats: () => ({
     title: 'Stats',
     load: async () => {
@@ -448,8 +454,7 @@ function refreshLike() {
   const on = song && liked.has(song.id);
   $('like').classList.toggle('on', !!on);
 }
-$('like').onclick = async () => {
-  const song = state.queue[state.index];
+async function toggleLike(song) {
   if (!song) return;
   const want = !liked.has(song.id);
   want ? liked.add(song.id) : liked.delete(song.id);
@@ -458,9 +463,10 @@ $('like').onclick = async () => {
   if (!r.ok) {
     want ? liked.delete(song.id) : liked.add(song.id);
     refreshLike();
-    setStatus(`Couldn't ${want ? 'like' : 'unlike'}: ${r.error.slice(0, 100)}`);
-  } else setStatus(want ? 'Added to your liked songs' : 'Removed from liked songs');
-};
+    toast(`Couldn't ${want ? 'like' : 'unlike'}: ${r.error.slice(0, 100)}`);
+  } else toast(want ? 'Added to your liked songs' : 'Removed from liked songs');
+}
+$('like').onclick = () => toggleLike(state.queue[state.index]);
 
 // ---------- sleep timer ----------
 const SLEEP_STEPS = [0, 15, 30, 45, 60, 'song'];
@@ -497,6 +503,246 @@ audio.addEventListener('timeupdate', () => {
   if (song && countedFor !== song.id && audio.currentTime >= 30) {
     countedFor = song.id;
     window.api.recordPlay({ id: song.id, title: song.title, artist: song.artist, thumbnail: song.thumbnail, seconds: audio.duration || 0 });
+  }
+});
+
+// ---------- right-click menu ----------
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => (t.hidden = true), 2800);
+}
+function askName(title, okLabel = 'Create') {
+  return new Promise((resolve) => {
+    const modal = $('modal'), input = $('m-input');
+    $('m-title').textContent = title;
+    $('m-ok').textContent = okLabel;
+    input.value = '';
+    modal.hidden = false;
+    setTimeout(() => input.focus(), 30);
+    const done = (v) => { modal.hidden = true; $('m-ok').onclick = $('m-cancel').onclick = input.onkeydown = null; resolve(v); };
+    $('m-ok').onclick = () => done(input.value.trim() || null);
+    $('m-cancel').onclick = () => done(null);
+    input.onkeydown = (e) => { if (e.key === 'Enter') done(input.value.trim() || null); if (e.key === 'Escape') done(null); };
+  });
+}
+const copyText = async (t) => { try { await navigator.clipboard.writeText(t); toast('Link copied'); } catch { toast("Couldn't copy"); } };
+
+function closeMenu() {
+  const ctx = $('ctx');
+  ctx.hidden = true;
+  ctx.innerHTML = '';
+  document.querySelectorAll('.ctxing').forEach((e) => e.classList.remove('ctxing'));
+}
+function buildMenu(items, level) {
+  const m = document.createElement('div');
+  m.className = 'cm';
+  m.dataset.level = level;
+  for (const it of items) {
+    if (it.sep) { m.insertAdjacentHTML('beforeend', '<div class="msep"></div>'); continue; }
+    if (it.header) { m.insertAdjacentHTML('beforeend', `<div class="mhead">${esc(it.header)}</div>`); continue; }
+    if (it.none) { m.insertAdjacentHTML('beforeend', `<div class="mnone">${esc(it.none)}</div>`); continue; }
+    const el = document.createElement('div');
+    el.className = `mi${it.on ? ' on' : ''}${it.danger ? ' danger' : ''}`;
+    el.innerHTML = `${it.icon ? ic(it.icon) : '<span style="width:18px"></span>'}<span class="lab">${esc(it.label)}</span>${it.sub ? ic('right').replace('class="i"', 'class="i chev"') : ''}`;
+    el.addEventListener('mouseenter', () => {
+      m.querySelectorAll('.mi.sel').forEach((x) => x.classList.remove('sel'));
+      el.classList.add('sel');
+      closeDeeper(level);
+      if (it.sub) openSub(el, it, level);
+    });
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (it.sub) return openSub(el, it, level);
+      closeMenu();
+      it.action?.();
+    });
+    m.appendChild(el);
+  }
+  return m;
+}
+function closeDeeper(level) {
+  document.querySelectorAll('#ctx .cm').forEach((x) => { if (Number(x.dataset.level) > level) x.remove(); });
+}
+function place(m, x, y, anchor) {
+  const ctx = $('ctx');
+  ctx.appendChild(m);
+  const w = m.offsetWidth, h = m.offsetHeight;
+  let left = x, top = y;
+  if (anchor) { // submenu: to the right of its parent, or the left if there is no room
+    left = anchor.right + 4;
+    if (left + w > innerWidth - 8) left = anchor.left - w - 4;
+    top = anchor.top - 6;
+  }
+  if (left + w > innerWidth - 8) left = Math.max(8, innerWidth - w - 8);
+  if (top + h > innerHeight - 8) top = Math.max(8, innerHeight - h - 8);
+  m.style.left = `${left}px`;
+  m.style.top = `${top}px`;
+}
+async function openSub(el, it, level) {
+  if (el.dataset.open) return;
+  closeDeeper(level);
+  const rect = el.getBoundingClientRect();
+  const loading = buildMenu([{ none: 'Loading…' }], level + 1);
+  place(loading, 0, 0, rect);
+  const items = typeof it.sub === 'function' ? await it.sub() : it.sub;
+  if (!loading.isConnected) return;
+  loading.remove();
+  place(buildMenu(items, level + 1), 0, 0, rect);
+}
+function showMenu(x, y, items, target) {
+  closeMenu();
+  const ctx = $('ctx');
+  ctx.hidden = false;
+  target?.classList.add('ctxing');
+  place(buildMenu(items, 0), x, y);
+}
+$('ctx').addEventListener('mousedown', (e) => { if (e.target === $('ctx')) closeMenu(); });
+$('ctx').addEventListener('contextmenu', (e) => { e.preventDefault(); if (e.target === $('ctx')) closeMenu(); });
+window.addEventListener('blur', closeMenu);
+window.addEventListener('resize', closeMenu);
+$('scroll').addEventListener('scroll', () => { if (!$('ctx').hidden) closeMenu(); });
+document.addEventListener('keydown', (e) => {
+  if ($('ctx').hidden) return;
+  const menus = [...document.querySelectorAll('#ctx .cm')];
+  const last = menus[menus.length - 1];
+  if (!last) return;
+  const items = [...last.querySelectorAll('.mi')];
+  const cur = items.findIndex((x) => x.classList.contains('sel'));
+  if (e.key === 'Escape') { e.preventDefault(); menus.length > 1 ? last.remove() : closeMenu(); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const n = (cur + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    items.forEach((x) => x.classList.remove('sel'));
+    items[n]?.classList.add('sel');
+    items[n]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    items[cur]?.click();
+  } else if (e.key === 'ArrowLeft' && menus.length > 1) { e.preventDefault(); last.remove(); }
+});
+
+// --- queue helpers
+function playNow(song) {
+  if (state.index < 0 || !state.queue.length) { state.queue = [song]; state.index = 0; state.history = []; }
+  else { state.history.push(state.index); state.queue.splice(state.index + 1, 0, song); state.index++; }
+  pickedByUser = true;
+  failStreak = 0;
+  playCurrent();
+}
+function queueSong(song, next) {
+  if (state.index < 0 || !state.queue.length) return playNow(song);
+  if (next) state.queue.splice(state.index + 1, 0, song);
+  else state.queue.push(song);
+  toast(next ? 'Playing next' : 'Added to queue');
+}
+async function songsOf(item) {
+  if (item.kind === 'song') return [item];
+  const page = item.kind === 'playlist'
+    ? { sections: [{ items: await unwrap(window.api.playlist(item.id)) }] }
+    : await unwrap(window.api.browse(item.id, item.params));
+  return page.sections.flatMap((s) => s.items).filter((x) => (x.kind || 'song') === 'song').map((x) => ({ ...x, kind: 'song' }));
+}
+const linkOf = (item) => item.kind === 'song' ? `https://music.youtube.com/watch?v=${item.id}`
+  : item.kind === 'playlist' ? `https://music.youtube.com/playlist?list=${String(item.id).replace(/^VL/, '')}`
+  : item.kind === 'artist' ? `https://music.youtube.com/channel/${item.id}`
+  : `https://music.youtube.com/browse/${item.id}`;
+
+// --- song actions
+async function playlistSubmenu(song) {
+  const r = await window.api.library();
+  const lists = (r.ok ? r.data : []).filter((p) => p.id !== 'LM');
+  const out = [{ label: 'New playlist…', icon: 'plus', action: async () => {
+    const name = await askName('New playlist');
+    if (!name) return;
+    const res = await window.api.playlistCreate(name, song.id);
+    toast(res.ok ? `Created "${name}" with this song` : `Couldn't create: ${res.error.slice(0, 90)}`);
+    if (res.ok) loadSideLibrary(true);
+  } }];
+  if (!r.ok) return [...out, { none: r.error.slice(0, 80) }];
+  if (lists.length) out.push({ sep: true });
+  for (const p of lists) {
+    out.push({ label: p.title, icon: 'note', action: async () => {
+      const res = await window.api.playlistAdd(p.id, song.id);
+      toast(res.ok ? `Added to ${p.title}` : `Couldn't add: ${res.error.slice(0, 90)}`);
+    } });
+  }
+  return out;
+}
+async function removeFromPlaylist(plId, song) {
+  const res = await window.api.playlistRemove(plId, song.id);
+  if (!res.ok) return toast(`Couldn't remove: ${res.error.slice(0, 90)}`);
+  toast('Removed from playlist');
+  openPage(nav.current, false);
+}
+function startRadio(song) {
+  openPage({
+    title: `${song.title} radio`,
+    loading: 'Building radio…',
+    load: async () => {
+      const more = await unwrap(window.api.radio(song.id));
+      return { header: { title: `${song.title} radio`, subtitle: 'Songs similar to this one', thumbnail: song.thumbnail }, kindLabel: 'Radio', sections: [{ title: '', items: [song, ...more.filter((s) => s.id !== song.id)] }] };
+    },
+  });
+}
+function goArtist(song) {
+  const name = String(song.artist || '').split(/, | & /)[0];
+  if (song.artistId) return openPage(browseDesc(name, song.artistId));
+  $('q').value = name;
+  $('q').dispatchEvent(new Event('input'));
+}
+function songMenu(song) {
+  const isLiked = liked.has(song.id);
+  const plId = nav.current?.playlistId;
+  const items = [
+    { label: 'Play now', icon: 'play', action: () => playNow(song) },
+    { label: 'Play next', icon: 'next-up', action: () => queueSong(song, true) },
+    { label: 'Add to queue', icon: 'queue', action: () => queueSong(song, false) },
+    { sep: true },
+    { label: isLiked ? 'Remove from liked songs' : 'Like', icon: 'heart', on: isLiked, action: () => toggleLike(song) },
+    { label: 'Add to playlist', icon: 'plus', sub: () => playlistSubmenu(song) },
+  ];
+  if (plId && plId !== 'LM' && state.sections.some((s) => s.items.some((x) => x.id === song.id))) {
+    items.push({ label: 'Remove from this playlist', icon: 'trash', danger: true, action: () => removeFromPlaylist(plId, song) });
+  }
+  items.push({ sep: true });
+  items.push({ label: 'Start radio', icon: 'radio', action: () => startRadio(song) });
+  if (song.artist) items.push({ label: 'Go to artist', icon: 'user', action: () => goArtist(song) });
+  if (song.albumId) items.push({ label: 'Go to album', icon: 'disc', action: () => openPage(browseDesc('Album', song.albumId)) });
+  items.push({ label: 'Copy link', icon: 'link', action: () => copyText(linkOf(song)) });
+  return items;
+}
+function collectionMenu(item) {
+  const items = [{ label: 'Open', icon: 'right', action: () => (item.kind === 'playlist' ? openPage(playlistDesc(item.title, item.id)) : openPage(browseDesc(item.title, item.id, item.params))) }];
+  if (item.kind === 'album' || item.kind === 'playlist' || item.kind === 'artist') {
+    items.unshift({ label: 'Shuffle play', icon: 'play', action: async () => {
+      setStatus(`Loading ${item.title}…`);
+      try { const s = await songsOf(item); setStatus(''); s.length ? playFromList(s, s[Math.floor(Math.random() * s.length)].id) : toast('Nothing playable there'); }
+      catch (e) { setStatus(''); toast(String(e.message || e).slice(0, 90)); }
+    } });
+    items.splice(2, 0, { label: 'Add to queue', icon: 'queue', action: async () => {
+      try { const s = await songsOf(item); s.forEach((x) => (state.index < 0 ? state.queue.push(x) : state.queue.push(x))); toast(`Added ${s.length} songs to the queue`); if (state.index < 0 && s.length) { state.index = 0; playCurrent(); } }
+      catch (e) { toast(String(e.message || e).slice(0, 90)); }
+    } });
+  }
+  items.push({ sep: true }, { label: 'Copy link', icon: 'link', action: () => copyText(linkOf(item)) });
+  return items;
+}
+document.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  const row = e.target.closest('.row, .card-i');
+  if (row) {
+    const item = state.sections[Number(row.dataset.s)]?.items[Number(row.dataset.i)];
+    if (!item || item.kind === 'artist-stat') return;
+    return showMenu(e.clientX, e.clientY, item.kind === 'song' ? songMenu(item) : collectionMenu(item), row);
+  }
+  const sl = e.target.closest('.sl');
+  if (sl) return showMenu(e.clientX, e.clientY, collectionMenu({ kind: 'playlist', id: sl.dataset.id, title: sl.dataset.title }), sl);
+  if (e.target.closest('#np')) {
+    const song = state.queue[state.index];
+    if (song) showMenu(e.clientX, e.clientY, songMenu(song), $('np'));
   }
 });
 

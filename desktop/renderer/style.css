@@ -158,3 +158,29 @@ input[type=range]:hover { background:linear-gradient(to right, var(--accent) var
 
 [hidden] { display:none !important; }
 img[src=""], img:not([src]) { visibility:hidden; }
+
+/* ---------- context menu ---------- */
+#ctx { position:fixed; inset:0; z-index:50; }
+.cm { position:fixed; min-width:230px; max-width:320px; background:#1b1b22; border-radius:10px; padding:6px; box-shadow:0 12px 40px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.07); animation:cmIn .08s ease-out; max-height:min(70vh,560px); overflow:auto; }
+@keyframes cmIn { from { opacity:0; transform:scale(.97); } to { opacity:1; transform:none; } }
+.cm .mi { display:flex; align-items:center; gap:12px; padding:9px 12px; border-radius:6px; cursor:pointer; color:var(--text); font-size:13.5px; white-space:nowrap; }
+.cm .mi .i { width:18px; height:18px; color:var(--dim); }
+.cm .mi.on .i { color:#ff6b9a; }
+.cm .mi:hover, .cm .mi.sel { background:rgba(255,255,255,.1); }
+.cm .mi.danger { color:#ff8a8a; } .cm .mi.danger .i { color:#ff8a8a; }
+.cm .mi .lab { flex:1; overflow:hidden; text-overflow:ellipsis; }
+.cm .mi .chev { width:16px; height:16px; margin-left:auto; }
+.cm .msep { height:1px; background:rgba(255,255,255,.08); margin:5px 4px; }
+.cm .mhead { padding:8px 12px 6px; font-size:12px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cm .mnone { padding:10px 12px; color:var(--dim); font-size:13px; }
+/* toast + modal */
+#toast { position:fixed; left:50%; bottom:112px; transform:translateX(-50%); background:#fff; color:#000; padding:11px 20px; border-radius:24px; font-weight:600; font-size:13.5px; z-index:60; box-shadow:0 8px 30px rgba(0,0,0,.6); animation:cmIn .15s; max-width:70vw; }
+#modal { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:70; display:grid; place-items:center; }
+.mbox { background:#1b1b22; border-radius:14px; padding:24px; width:380px; box-shadow:0 20px 60px rgba(0,0,0,.7); }
+.mbox h3 { margin:0 0 14px; font-size:20px; }
+#m-input { width:100%; padding:12px 14px; border-radius:8px; border:2px solid transparent; background:#2a2a33; color:var(--text); font-size:15px; outline:none; }
+#m-input:focus { border-color:var(--accent); }
+.mbtns { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
+.mbtns button { padding:10px 22px; border-radius:22px; border:0; cursor:pointer; font-weight:700; background:#2a2a33; }
+.mbtns #m-ok { background:var(--text); color:#000; }
+.row.ctxing, .card-i.ctxing, .sl.ctxing { background:rgba(255,255,255,.1); }
