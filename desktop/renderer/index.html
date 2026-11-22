@@ -7,43 +7,89 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <aside id="side">
-    <h1>ArchiveTune</h1>
-    <input id="q" type="search" placeholder="Search songs…" />
-    <nav>
-      <button data-view="home" class="nav">Home</button>
-      <button data-view="explore" class="nav">Explore</button>
-      <button data-view="charts" class="nav">Charts</button>
-      <button data-view="newreleases" class="nav">New releases</button>
-      <button data-view="moods" class="nav">Moods &amp; genres</button>
-      <button data-view="recommended" class="nav">Recommended for you</button>
-      <button data-view="library" class="nav">Library</button>
-      <button data-view="liked" class="nav">Liked songs</button>
-      <button data-view="history" class="nav">History</button>
-      <button data-view="stats" class="nav">Stats</button>
-      <button data-view="queue" class="nav">Queue</button>
-    </nav>
-    <div id="account"></div>
-    <div id="update"></div>
-    <div class="credit">Made by Taha <span id="ver"></span></div>
-  </aside>
-  <main>
-    <header><button id="back" hidden title="Back">←</button><h2 id="title">Search</h2><span id="status"></span></header>
-    <div id="list"></div>
-  </main>
-  <footer id="player">
-    <div id="np"><img id="art" alt="" /><div id="meta"><div id="np-title">Nothing playing</div><div id="np-artist"></div></div></div>
-    <div id="controls">
-      <button id="prev" title="Previous">⏮</button>
-      <button id="play" title="Play / pause">▶</button>
-      <button id="next" title="Next">⏭</button>
-      <button id="like" title="Like (syncs to your YouTube account)">♡</button>
-      <button id="lyr" title="Lyrics">♪</button>
-      <button id="sleep" title="Sleep timer">☾</button>
-    </div>
-    <div id="seek"><span id="cur">0:00</span><input id="bar" type="range" min="0" max="1000" value="0" /><span id="dur">0:00</span></div>
-    <input id="vol" type="range" min="0" max="100" value="80" title="Volume" />
-  </footer>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
+    <symbol id="i-explore" viewBox="0 0 24 24"><path d="M12 10.9c-.61 0-1.1.49-1.1 1.1s.49 1.1 1.1 1.1c.61 0 1.1-.49 1.1-1.1s-.49-1.1-1.1-1.1zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm2.19 12.19L6 18l3.81-8.19L18 6l-3.81 8.19z"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M7.5 21H2V9h5.5v12zm7.25-18h-5.5v18h5.5V3zM22 11h-5.5v10H22V11z"/></symbol>
+    <symbol id="i-disc" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5zm0-5.5c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z"/></symbol>
+    <symbol id="i-mood" viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-10c.83 0 1.5-.67 1.5-1.5S16.33 7 15.5 7 14 7.67 14 8.5s.67 1.5 1.5 1.5zm-7 0C9.33 10 10 9.33 10 8.5S9.33 7 8.5 7 7 7.67 7 8.5 7.67 10 8.5 10zm3.5 7.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></symbol>
+    <symbol id="i-stats" viewBox="0 0 24 24"><path d="M5 9h3v11H5zm5.5-5h3v16h-3zM16 13h3v7h-3z"/></symbol>
+    <symbol id="i-queue" viewBox="0 0 24 24"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></symbol>
+  </svg>
+
+  <div id="app">
+    <aside id="side">
+      <nav class="card" id="mainnav">
+        <button data-view="home" class="nav"><svg class="i"><use href="#i-home"/></svg>Home</button>
+        <button data-view="explore" class="nav"><svg class="i"><use href="#i-explore"/></svg>Explore</button>
+        <button data-view="charts" class="nav"><svg class="i"><use href="#i-chart"/></svg>Charts</button>
+        <button data-view="newreleases" class="nav"><svg class="i"><use href="#i-disc"/></svg>New releases</button>
+        <button data-view="moods" class="nav"><svg class="i"><use href="#i-mood"/></svg>Moods &amp; genres</button>
+      </nav>
+      <section class="card" id="libcard">
+        <div class="libhead">Your library</div>
+        <div class="libquick">
+          <button data-view="recommended" class="nav"><span class="tile t-rec"><svg class="i"><use href="#i-note"/></svg></span><span class="nt">Recommended for you</span></button>
+          <button data-view="liked" class="nav"><span class="tile t-like"><svg class="i"><use href="#i-heart"/></svg></span><span class="nt">Liked songs</span></button>
+          <button data-view="history" class="nav"><span class="tile"><svg class="i"><use href="#i-history"/></svg></span><span class="nt">History</span></button>
+          <button data-view="stats" class="nav"><span class="tile"><svg class="i"><use href="#i-stats"/></svg></span><span class="nt">Stats</span></button>
+          <button data-view="queue" class="nav"><span class="tile"><svg class="i"><use href="#i-queue"/></svg></span><span class="nt">Queue</span></button>
+        </div>
+        <div class="libsep"></div>
+        <div id="sidelib"></div>
+        <div class="sidefoot"><div id="update"></div><div class="credit">Made by Taha <span id="ver"></span></div></div>
+      </section>
+    </aside>
+
+    <main id="main" class="card">
+      <div id="hero"></div>
+      <div id="topbar">
+        <div class="navbtns"><button id="back" hidden title="Back"><svg class="i"><use href="#i-left"/></svg></button></div>
+        <label id="searchbox"><svg class="i"><use href="#i-search"/></svg><input id="q" type="search" placeholder="What do you want to play?" /></label>
+        <div id="account"></div>
+      </div>
+      <div id="scroll">
+        <div class="pagehead"><h2 id="title">Home</h2><span id="status"></span></div>
+        <div id="list"></div>
+      </div>
+    </main>
+
+    <footer id="player">
+      <div id="np">
+        <img id="art" alt="" />
+        <div id="meta"><div id="np-title">Nothing playing</div><div id="np-artist"></div></div>
+        <button id="like" class="ib" title="Like (syncs to your YouTube account)"><svg class="i"><use href="#i-heart"/></svg></button>
+      </div>
+      <div id="center">
+        <div id="controls">
+          <button id="prev" class="ib" title="Previous"><svg class="i"><use href="#i-prev"/></svg></button>
+          <button id="play" title="Play / pause"><svg class="i"><use href="#i-play"/></svg></button>
+          <button id="next" class="ib" title="Next"><svg class="i"><use href="#i-next"/></svg></button>
+        </div>
+        <div id="seek"><span id="cur">0:00</span><input id="bar" type="range" min="0" max="1000" value="0" /><span id="dur">0:00</span></div>
+      </div>
+      <div id="right">
+        <button id="lyr" class="ib" title="Lyrics"><svg class="i"><use href="#i-mic"/></svg></button>
+        <button id="sleep" class="ib" title="Sleep timer"><svg class="i"><use href="#i-moon"/></svg><span id="sleep-txt"></span></button>
+        <svg class="i vol-i"><use href="#i-volume"/></svg>
+        <input id="vol" type="range" min="0" max="100" value="80" title="Volume" />
+      </div>
+    </footer>
+  </div>
+
   <aside id="lyrics" hidden><div id="lyr-head"><b>Lyrics</b> <span id="lyr-src"></span><button id="lyr-close">✕</button></div><div id="lyr-body"></div></aside>
   <audio id="audio" preload="auto"></audio>
   <script src="app.js"></script>

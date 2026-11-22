@@ -18,38 +18,67 @@ function shuffle(arr) {
 state.sections = [];
 const KIND_LABEL = { album: 'Album', artist: 'Artist', playlist: 'Playlist', mood: '', page: '' };
 
+const ic = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
 function rowHtml(s, si, i, cur) {
   return `<div class="row${s.id === cur ? ' playing' : ''}" data-s="${si}" data-i="${i}">
-      <img loading="lazy" src="${esc(s.thumbnail)}" alt="" />
-      <div><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div>
+      <div class="n"><span>${i + 1}</span>${ic('play')}</div>
+      <div class="m"><img loading="lazy" src="${esc(s.thumbnail)}" alt="" /><div style="min-width:0"><div class="t">${esc(s.title)}</div><div class="a">${esc(s.artist)}</div></div></div>
       <div class="d">${s.duration ? fmt(s.duration) : ''}</div>
     </div>`;
 }
 function cardHtml(c, si, i) {
-  return `<div class="card" data-s="${si}" data-i="${i}">
-      ${c.thumbnail ? `<img loading="lazy" src="${esc(c.thumbnail)}" alt="" class="${c.kind === 'artist' ? 'round' : ''}" />` : '<div class="ph"></div>'}
+  const playable = c.kind === 'album' || c.kind === 'playlist';
+  return `<div class="card-i" data-s="${si}" data-i="${i}">
+      <div class="cimg">${c.thumbnail ? `<img loading="lazy" src="${esc(c.thumbnail)}" alt="" class="${c.kind === 'artist' ? 'round' : ''}" />` : `<div class="ph"></div>`}
+      ${playable ? `<button class="cplay" data-play="1" title="Play">${ic('play')}</button>` : ''}</div>
       <div class="ct">${esc(c.title)}</div><div class="a">${esc(c.artist || KIND_LABEL[c.kind] || '')}</div>
     </div>`;
 }
+function heroColor(text) {
+  let h = 0;
+  for (const ch of String(text || 'x')) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `hsl(${h}, 48%, 24%)`;
+}
 function renderPage(title, page) {
   state.sections = page.sections || [];
-  $('title').textContent = title;
+  $('title').textContent = page.header?.title ? '' : title;
+  document.querySelector('.pagehead').style.display = page.header?.title ? 'none' : '';
+  $('hero').style.setProperty('--hero', heroColor(page.header?.title || title));
   const cur = state.queue[state.index]?.id;
   let html = '';
+  const allSongs = state.sections.flatMap((s) => s.items).filter((x) => (x.kind || 'song') === 'song');
   if (page.header?.title) {
-    html += `<div class="phead">${page.header.thumbnail ? `<img src="${esc(page.header.thumbnail)}" alt="" />` : ''}<div><div class="pt">${esc(page.header.title)}</div><div class="a">${esc(page.header.subtitle || '')}</div></div></div>`;
+    html += `<div class="phead">${page.header.thumbnail ? `<img src="${esc(page.header.thumbnail)}" alt="" />` : ''}<div><div class="pk">${esc(page.kindLabel || '')}</div><div class="pt">${esc(page.header.title)}</div><div class="a">${esc(page.header.subtitle || '')}</div></div></div>`;
+  }
+  if (allSongs.length && (page.header?.title || state.sections.length === 1)) {
+    html += `<div class="actions"><button class="bigplay" data-playall="1" title="Shuffle play">${ic('play')}</button><span class="hint">Shuffle play · ${allSongs.length} songs</span></div>`;
   }
   state.sections.forEach((sec, si) => {
     const items = sec.items.map((it) => ({ ...it, kind: it.kind || 'song' }));
     sec.items = items;
     const songs = items.filter((x) => x.kind === 'song');
-    html += `<h3 class="sec">${esc(sec.title)}</h3>`;
+    if (sec.title) {
+      const shelf = songs.length !== items.length && items.length > 5;
+      html += `<div class="sechead"><h3 class="sec">${esc(sec.title)}</h3>${shelf ? `<div class="arrows"><button data-scroll="-1" title="Back">${ic('left')}</button><button data-scroll="1" title="Next">${ic('right')}</button></div>` : ''}</div>`;
+    }
     if (songs.length === items.length) html += items.map((s, i) => rowHtml(s, si, i, cur)).join('');
-    else html += `<div class="cards">${items.map((c, i) => (c.kind === 'song' ? rowHtml(c, si, i, cur) : cardHtml(c, si, i))).join('')}</div>`;
+    else html += `<div class="shelf">${items.map((c, i) => (c.kind === 'song' ? cardSong(c, si, i) : cardHtml(c, si, i))).join('')}</div>`;
   });
   $('list').innerHTML = html || '<div class="msg">Nothing here yet.</div>';
+  $('scroll').scrollTop = 0;
 }
-function showMessage(title, msg) { $('title').textContent = title; $('list').innerHTML = `<div class="msg">${esc(msg)}</div>`; }
+function cardSong(c, si, i) {
+  return `<div class="card-i" data-s="${si}" data-i="${i}">
+      <div class="cimg">${c.thumbnail ? `<img loading="lazy" src="${esc(c.thumbnail)}" alt="" />` : '<div class="ph"></div>'}<button class="cplay" data-song="1" title="Play">${ic('play')}</button></div>
+      <div class="ct">${esc(c.title)}</div><div class="a">${esc(c.artist)}</div>
+    </div>`;
+}
+function showMessage(title, msg) {
+  $('title').textContent = title;
+  document.querySelector('.pagehead').style.display = '';
+  $('hero').style.setProperty('--hero', heroColor(title));
+  $('list').innerHTML = `<div class="msg">${esc(msg)}</div>`;
+}
 
 // ---------- navigation ----------
 const nav = { stack: [], current: null };
@@ -79,10 +108,10 @@ $('back').onclick = () => {
 };
 
 const unwrap = async (p) => { const r = await p; if (!r.ok) throw new Error(r.error); return r.data; };
-const browseDesc = (title, id, params) => ({ title, load: async () => unwrap(window.api.browse(id, params)) });
+const browseDesc = (title, id, params) => ({ title, load: async () => { const p = await unwrap(window.api.browse(id, params)); p.kindLabel = /^MPRE|^OLAK/.test(id) ? 'Album' : id.startsWith('UC') ? 'Artist' : ''; return p; } });
 const playlistDesc = (title, id) => ({
   title,
-  load: async () => ({ sections: [{ title: '', items: await unwrap(window.api.playlist(id)) }] }),
+  load: async () => ({ header: { title, subtitle: '', thumbnail: '' }, kindLabel: 'Playlist', sections: [{ title: '', items: await unwrap(window.api.playlist(id)) }] }),
 });
 
 const VIEWS = {
@@ -130,17 +159,54 @@ const VIEWS = {
 function show(view) { return openRoot(VIEWS[view](), view); }
 document.querySelectorAll('.nav').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
 
-$('list').addEventListener('click', (e) => {
-  const el = e.target.closest('.row, .card');
+$('list').addEventListener('click', async (e) => {
+  const scrollBtn = e.target.closest('[data-scroll]');
+  if (scrollBtn) {
+    const shelf = scrollBtn.closest('.sechead').nextElementSibling;
+    shelf?.scrollBy({ left: Number(scrollBtn.dataset.scroll) * 600 });
+    return;
+  }
+  if (e.target.closest('[data-playall]')) {
+    const songs = state.sections.flatMap((s) => s.items).filter((x) => x.kind === 'song');
+    if (songs.length) playFromList(songs, songs[Math.floor(Math.random() * songs.length)].id);
+    return;
+  }
+  const el = e.target.closest('.row, .card-i');
   if (!el) return;
   const sec = state.sections[Number(el.dataset.s)];
   const item = sec?.items[Number(el.dataset.i)];
   if (!item) return;
   if (item.kind === 'song') return playFromList(sec.items.filter((x) => x.kind === 'song'), item.id);
   if (item.kind === 'artist-stat') return;
+  if (e.target.closest('[data-play]')) {
+    // Play button on an album / playlist card: load it and shuffle-play without opening the page.
+    setStatus(`Loading ${item.title}…`);
+    try {
+      const page = item.kind === 'playlist'
+        ? { sections: [{ items: await unwrap(window.api.playlist(item.id)) }] }
+        : await unwrap(window.api.browse(item.id, item.params));
+      const songs = page.sections.flatMap((s) => s.items).filter((x) => (x.kind || 'song') === 'song').map((x) => ({ ...x, kind: 'song' }));
+      setStatus('');
+      if (songs.length) playFromList(songs, songs[Math.floor(Math.random() * songs.length)].id);
+      else setStatus('Nothing playable in that one');
+    } catch (err) { setStatus(String(err.message || err).slice(0, 100)); }
+    return;
+  }
   if (item.kind === 'playlist') return openPage(playlistDesc(item.title, item.id));
   openPage(browseDesc(item.title, item.id, item.params));
 });
+
+// Start downloading a song when the pointer rests on it, so clicking it starts sooner.
+let hoverTimer = null;
+$('list').addEventListener('mouseover', (e) => {
+  const el = e.target.closest('.row, .card-i');
+  clearTimeout(hoverTimer);
+  if (!el) return;
+  const item = state.sections[Number(el.dataset.s)]?.items[Number(el.dataset.i)];
+  if (!item || item.kind !== 'song') return;
+  hoverTimer = setTimeout(() => { window.api.stream(item.id, 'hover'); }, 500);
+});
+$('list').addEventListener('mouseleave', () => clearTimeout(hoverTimer));
 
 let searchTimer;
 $('q').addEventListener('input', () => {
@@ -156,11 +222,25 @@ $('q').addEventListener('input', () => {
   }, 350);
 });
 
+// ---------- sidebar library ----------
+async function loadSideLibrary(on) {
+  const box = $('sidelib');
+  if (!on) { box.innerHTML = '<div class="msg" style="padding:8px 10px;font-size:13px">Sign in to see your playlists here.</div>'; return; }
+  const r = await window.api.library();
+  if (!r.ok || !r.data.length) { box.innerHTML = ''; return; }
+  box.innerHTML = r.data.map((p) => `<div class="sl" data-id="${esc(p.id)}" data-title="${esc(p.title)}"><span class="tile">${ic('note')}</span><div class="st"><div class="sn">${esc(p.title)}</div><div class="ss">Playlist${p.count ? ' · ' + esc(p.count) : ''}</div></div></div>`).join('');
+}
+$('sidelib').addEventListener('click', (e) => {
+  const el = e.target.closest('.sl');
+  if (el) openRoot(playlistDesc(el.dataset.title, el.dataset.id), '');
+});
+
 // ---------- account ----------
 async function refreshAccount() {
   const r = await window.api.authStatus();
   const on = r.ok && r.data.signedIn;
-  $('account').innerHTML = on ? '<button id="out">Sign out</button>' : '<button id="in">Sign in with Google</button>';
+  $('account').innerHTML = on ? '<button id="out">Sign out</button>' : '<button id="in">Sign in</button>';
+  loadSideLibrary(on);
   if (on) $('out').onclick = async () => { await window.api.logout(); await refreshAccount(); show('home'); };
   else $('in').onclick = async () => { setStatus('Signing in…'); await window.api.login(); await refreshAccount(); show(state.view || 'home'); };
 }
@@ -272,8 +352,8 @@ function highlight() {
 $('play').onclick = () => (audio.paused ? audio.play() : audio.pause());
 $('next').onclick = () => next(false);
 $('prev').onclick = prev;
-audio.addEventListener('play', () => ($('play').textContent = '⏸'));
-audio.addEventListener('pause', () => ($('play').textContent = '▶'));
+audio.addEventListener('play', () => ($('play').innerHTML = ic('pause')));
+audio.addEventListener('pause', () => ($('play').innerHTML = ic('play')));
 audio.addEventListener('ended', () => {
   if (sleepAfterSong) { sleepIdx = 0; sleepAfterSong = false; updateSleepLabel(); setStatus('Sleep timer: stopped after song'); return; }
   next(true);
@@ -296,13 +376,15 @@ audio.addEventListener('error', () => {
 audio.addEventListener('timeupdate', () => {
   if (!audio.duration || seeking) return;
   $('bar').value = (audio.currentTime / audio.duration) * 1000;
+  $('bar').style.setProperty('--p', (audio.currentTime / audio.duration) * 100 + '%');
   $('cur').textContent = fmt(audio.currentTime);
   $('dur').textContent = fmt(audio.duration);
 });
 let seeking = false;
 $('bar').addEventListener('input', () => { seeking = true; });
 $('bar').addEventListener('change', () => { if (audio.duration) audio.currentTime = ($('bar').value / 1000) * audio.duration; seeking = false; });
-$('vol').addEventListener('input', () => (audio.volume = $('vol').value / 100));
+$('vol').addEventListener('input', () => { audio.volume = $('vol').value / 100; $('vol').style.setProperty('--p', $('vol').value + '%'); });
+$('vol').style.setProperty('--p', '80%');
 audio.volume = 0.8;
 
 if ('mediaSession' in navigator) {
@@ -364,7 +446,6 @@ const liked = new Set();
 function refreshLike() {
   const song = state.queue[state.index];
   const on = song && liked.has(song.id);
-  $('like').textContent = on ? '♥' : '♡';
   $('like').classList.toggle('on', !!on);
 }
 $('like').onclick = async () => {
@@ -388,9 +469,7 @@ function updateSleepLabel() {
   const btn = $('sleep');
   const step = SLEEP_STEPS[sleepIdx];
   btn.classList.toggle('on', step !== 0);
-  if (step === 0) btn.textContent = '☾';
-  else if (step === 'song') btn.textContent = '☾ end of song';
-  else btn.textContent = `☾ ${Math.max(0, Math.ceil((sleepEnd - Date.now()) / 60000))} min`;
+  $('sleep-txt').textContent = step === 0 ? '' : step === 'song' ? 'end of song' : `${Math.max(0, Math.ceil((sleepEnd - Date.now()) / 60000))} min`;
 }
 function startSleep() {
   clearInterval(sleepTimer);

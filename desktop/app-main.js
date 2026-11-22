@@ -301,7 +301,7 @@ const procs = new Map(); // id -> { child, prio }
 
 function cancelPreloads(exceptId) {
   for (const [id, j] of procs) {
-    if (id !== exceptId && j.prio === 'preload') { j.cancelled = true; j.child.kill(); }
+    if (id !== exceptId && j.prio !== 'user') { j.cancelled = true; j.child.kill(); }
   }
 }
 
@@ -343,6 +343,10 @@ function runYtDlp(videoId, useCookies, prio) {
 function resolveStream(videoId, prio = 'user') {
   const existing = cachedFile(videoId);
   if (existing && !procs.has(videoId)) { try { fs.utimesSync(existing, new Date(), new Date()); } catch { /* ignore */ } return Promise.resolve(pathToFileURL(existing).href); }
+  if (prio === 'hover') {
+    // Only one hover-download at a time; the queue's preloads keep going.
+    for (const [pid, j] of procs) if (pid !== videoId && j.prio === 'hover') { j.cancelled = true; j.child.kill(); }
+  }
   if (prio === 'user') {
     // A song the user asked for gets all the bandwidth: pause background preloading.
     cancelPreloads(videoId);
