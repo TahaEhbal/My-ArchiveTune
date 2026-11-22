@@ -43,13 +43,24 @@ jobs:
       - name: Check yt-dlp can resolve a stream
         run: ./bin/yt-dlp.exe -f "bestaudio[ext=m4a]/bestaudio" -g --no-warnings "https://music.youtube.com/watch?v=dQw4w9WgXcQ" | head -c 80
         continue-on-error: true
+      - name: Set version
+        run: npm version "0.1.${{ github.run_number }}" --no-git-tag-version
       - name: Build portable exe
         run: npx electron-builder --win portable --publish never
+      - name: Package small code-only update
+        run: |
+          v="0.1.${{ github.run_number }}"
+          mkdir stage
+          cp app-main.js preload.js package.json stage/
+          cp -r renderer build stage/
+          (cd stage && npm install --omit=dev --no-audit --no-fund && node -e "import('youtubei.js').then(()=>console.log('stage import ok'))" && echo "$v" > version.txt)
+          powershell -NoProfile -Command "Compress-Archive -Path stage/* -DestinationPath code-$v.zip"
+          ls -l code-$v.zip
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="desktop-v0.1.${{ github.run_number }}"
-          gh release create "$tag" dist/ArchiveTune-Desktop-*.exe \
+          gh release create "$tag" dist/ArchiveTune-Desktop-*.exe "code-0.1.${{ github.run_number }}.zip" \
             --title "ArchiveTune Desktop 0.1.${{ github.run_number }}" \
             --notes "Windows portable build. Run the .exe; no install needed." --prerelease

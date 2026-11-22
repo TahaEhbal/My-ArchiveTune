@@ -9,4 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   playlist: (id) => ipcRenderer.invoke('yt:playlist', id),
   recommended: () => ipcRenderer.invoke('yt:recommended'),
   stream: (videoId) => ipcRenderer.invoke('yt:stream', videoId),
+  version: () => ipcRenderer.invoke('app:version'),
+  restart: () => ipcRenderer.invoke('app:restart'),
+  onUpdate: (cb) => ipcRenderer.on('update', (_e, msg) => cb(msg)),
 });
