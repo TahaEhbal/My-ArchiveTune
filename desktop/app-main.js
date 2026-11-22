@@ -712,7 +712,7 @@ function refreshTray() {
 }
 function setupTray() {
   try {
-    const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 20, height: 20 });
+    const img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 32, height: 32 });
     tray = new Tray(img);
     tray.on('click', showWindow);
     refreshTray();

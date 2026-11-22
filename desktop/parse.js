@@ -13,7 +13,9 @@ function walk(node, fn) {
 // YouTube serves tiny covers by default; the image servers accept a size in the URL, so ask for a big one.
 const hires = (u) => String(u || '')
   .replace(/=w\d+-h\d+[^?&#\s]*/, '=w544-h544-l90-rj')
-  .replace(/=s\d+[^?&#\s]*/, '=s544');
+  .replace(/=s\d+[^?&#\s]*/, '=s544')
+  // Video-style covers: the small variants (and their signed query strings) become the 480px one.
+  .replace(/(i\.ytimg\.com\/vi(?:_webp)?\/[\w-]{11}\/)(?:default|mqdefault|hqdefault|sddefault|hq720|\d)\.(jpg|webp)\S*/, '$1hqdefault.$2');
 const lastThumb = (t) => {
   const a = t?.musicThumbnailRenderer?.thumbnail?.thumbnails ?? t?.croppedSquareThumbnailRenderer?.thumbnail?.thumbnails ?? t?.thumbnails ?? [];
   return a.length ? hires(a[a.length - 1].url) : '';

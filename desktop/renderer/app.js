@@ -32,6 +32,24 @@ async function updateTiles() {
 }
 const KIND_LABEL = { album: 'Album', artist: 'Artist', playlist: 'Playlist', mood: '', page: '' };
 
+// Image sharpness: covers are requested small by default. sharp() = good for lists/cards, big() = full-screen
+// sizes. If a bigger variant doesn't exist, the <img> error handler below falls back to a smaller one.
+const sharp = (u) => String(u || '')
+  .replace(/=w\d+-h\d+[^?&#\s]*/, '=w544-h544-l90-rj')
+  .replace(/=s\d+[^?&#\s]*/, '=s544')
+  .replace(/(i\.ytimg\.com\/vi(?:_webp)?\/[\w-]{11}\/)(?:default|mqdefault|hqdefault|sddefault|hq720|\d)\.(jpg|webp)\S*/, '$1hqdefault.$2');
+const big = (u) => sharp(u)
+  .replace(/=w544-h544-l90-rj/, '=w1200-h1200-l90-rj')
+  .replace(/=s544/, '=s1200')
+  .replace(/(i\.ytimg\.com\/vi(?:_webp)?\/[\w-]{11}\/)hqdefault\.(jpg|webp)/, '$1maxresdefault.$2');
+document.addEventListener('error', (e) => {
+  const t = e.target;
+  if (!t || t.tagName !== 'IMG' || !t.src) return;
+  const prev = t.src;
+  if (/maxresdefault/.test(prev)) t.src = prev.replace('maxresdefault', 'hqdefault');
+  else if (/=w1200-h1200/.test(prev)) t.src = prev.replace('=w1200-h1200', '=w544-h544');
+  else if (/=s1200/.test(prev)) t.src = prev.replace('=s1200', '=s544');
+}, true);
 const ic = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
 function rowHtml(s, si, i, cur) {
   return `<div class="row${s.id === cur ? ' playing' : ''}" data-s="${si}" data-i="${i}">
@@ -56,6 +74,8 @@ function heroColor(text) {
 }
 function renderPage(title, page, keepScroll) {
   state.sections = page.sections || [];
+  state.sections.forEach((s) => (s.items || []).forEach((it) => { if (it.thumbnail) it.thumbnail = sharp(it.thumbnail); }));
+  if (page.header?.thumbnail) page.header.thumbnail = big(page.header.thumbnail);
   $('title').textContent = page.header?.title ? '' : title;
   document.querySelector('.pagehead').style.display = page.header?.title ? 'none' : '';
   $('hero').style.setProperty('--hero', heroColor(page.header?.title || title));
@@ -64,7 +84,7 @@ function renderPage(title, page, keepScroll) {
   if (page.html) { $('list').innerHTML = page.html; if (!keepScroll) $('scroll').scrollTop = 0; return; }
   const allSongs = state.sections.flatMap((s) => s.items).filter((x) => (x.kind || 'song') === 'song');
   if (page.header?.title) {
-    if (!page.header.thumbnail) page.header.thumbnail = allSongs.find((s) => s.thumbnail)?.thumbnail || '';
+    if (!page.header.thumbnail) page.header.thumbnail = big(allSongs.find((s) => s.thumbnail)?.thumbnail || '');
     html += `<div class="phead">${page.header.thumbnail ? `<img src="${esc(page.header.thumbnail)}" alt="" />` : ''}<div><div class="pk">${esc(page.kindLabel || '')}</div><div class="pt">${esc(page.header.title)}</div><div class="a">${esc(page.header.subtitle || '')}</div></div></div>`;
   }
   if (allSongs.length && (page.header?.title || state.sections.length === 1)) {
@@ -497,6 +517,7 @@ async function playCurrent() {
   if (!song) return;
   $('np-title').textContent = song.title;
   $('np-artist').textContent = song.artist;
+  if (song.thumbnail) song.thumbnail = sharp(song.thumbnail);
   $('art').src = song.thumbnail || '';
   setTile('tile-q', song.thumbnail);
   if (typeof fullFill === 'function') fullFill();
@@ -1100,7 +1121,7 @@ function fullFill() {
   const s = state.queue[state.index];
   if ($('full').hidden) return;
   $('fbg').style.backgroundImage = s?.thumbnail ? `url("${s.thumbnail}")` : '';
-  $('fart').src = s?.thumbnail || '';
+  $('fart').src = big(s?.thumbnail);
   $('ft').textContent = s?.title || 'Nothing playing';
   $('fa').textContent = s?.artist || '';
   $('fplay').innerHTML = ic(audio.paused ? 'play' : 'pause');
