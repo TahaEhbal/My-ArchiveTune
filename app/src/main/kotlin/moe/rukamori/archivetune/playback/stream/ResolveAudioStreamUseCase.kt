@@ -19,6 +19,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.guava.future
+import moe.rukamori.archivetune.innertube.YouTube
+import moe.rukamori.archivetune.innertube.models.YouTubeClient
 import moe.rukamori.archivetune.utils.YTPlayerUtils
 import timber.log.Timber
 import java.io.InterruptedIOException
@@ -331,6 +333,9 @@ class ResolveAudioStreamUseCase
                 } else {
                     request.authState
                 }
+            if (YTPlayerUtils.isAnonymousWebRouteBlocked(request.mediaId)) {
+                androidVrFallback(request)?.let { return it }
+            }
             val resolvedAuthState =
                 YTPlayerUtils.ensureYoutubeiPoTokensForPlayback(
                     videoId = request.mediaId,
@@ -339,6 +344,50 @@ class ResolveAudioStreamUseCase
             return youtubeiRepository.resolve(
                 request = request.copy(authState = resolvedAuthState),
                 priority = priority,
+            )
+        }
+
+        /**
+         * Last-resort route once the web routes keep returning HTTP 403: ask YouTube as the Android VR
+         * client, which gets direct audio URLs that don't need the web-only streaming token.
+         */
+        private suspend fun androidVrFallback(request: AudioStreamRequest): ResolvedAudioStream? {
+            val client = YouTubeClient.ANDROID_VR_1_65_10
+            val authState = YTPlayerUtils.anonymousPlaybackAuthState(request.authState)
+            val response =
+                YouTube
+                    .player(
+                        videoId = request.mediaId,
+                        playlistId = request.playlistId,
+                        client = client,
+                        setLogin = false,
+                        authState = authState,
+                    ).getOrNull() ?: return null
+            if (!response.playabilityStatus.status.equals("OK", ignoreCase = true)) return null
+            val streaming = response.streamingData ?: return null
+            val format =
+                streaming.adaptiveFormats
+                    .filter { it.isAudio && it.mimeType.startsWith("audio/") && !it.url.isNullOrBlank() }
+                    .maxByOrNull { it.bitrate } ?: return null
+            val url = format.url ?: return null
+            Timber.tag(TAG).i("Web routes refused for %s; using Android VR stream itag=%d", request.mediaId, format.itag)
+            val codecs = Regex("codecs=\"([^\"]+)\"").find(format.mimeType)?.groupValues?.get(1).orEmpty()
+            return ResolvedAudioStream(
+                url = url,
+                requestHeaders = mapOf("User-Agent" to client.userAgent),
+                formatId = format.itag,
+                mimeType = format.mimeType.substringBefore(';').trim(),
+                codecs = codecs,
+                bitrate = format.bitrate,
+                sampleRate = format.audioSampleRate,
+                contentLength = format.contentLength ?: -1L,
+                expiresAtMs = System.currentTimeMillis() + (streaming.expiresInSeconds ?: 1800).coerceAtLeast(60) * 1000L,
+                authFingerprint = authState.streamCacheFingerprint,
+                source = StreamSource.YOUTUBEI,
+                title = response.videoDetails?.title,
+                durationSeconds = response.videoDetails?.lengthSeconds?.toIntOrNull(),
+                loudnessDb = format.loudnessDb,
+                playbackTrackingUrl = response.playbackTracking?.videostatsPlaybackUrl?.baseUrl,
             )
         }
 

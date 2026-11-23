@@ -478,6 +478,17 @@ object YTPlayerUtils {
         return failedStreamClientsUntil.entries.any { (key, until) -> until > now && key.contains(marker) }
     }
 
+    /**
+     * True if the plain web route (MWEB, what the anonymous retry uses) was refused for this video
+     * too. YouTube is moving web clients to a streaming protocol that plain URLs can't fetch, so
+     * after this the resolver switches to the Android VR client, which still hands out direct URLs.
+     */
+    fun isAnonymousWebRouteBlocked(videoId: String): Boolean {
+        val marker = ":$videoId:MWEB@"
+        val now = System.currentTimeMillis()
+        return failedStreamClientsUntil.entries.any { (key, until) -> until > now && key.contains(marker) }
+    }
+
     /** The same session without the account cookie or any account-bound tokens. */
     fun anonymousPlaybackAuthState(authState: PlaybackAuthState): PlaybackAuthState =
         authState
