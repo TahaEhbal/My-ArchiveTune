@@ -350,7 +350,7 @@ class ResolveAudioStreamUseCase
                 throw e
             } catch (e: Exception) {
                 // The web route gave no usable audio (e.g. "No direct audio format"); try Android VR.
-                Timber.tag(TAG).w(e, "Web resolve failed for %s; trying Android VR", request.mediaId)
+                Timber.tag(TAG).w(e, "Web resolve failed for %s; trying fallback client", request.mediaId)
                 androidVrFallback(request) ?: throw e
             }
         }
@@ -359,8 +359,24 @@ class ResolveAudioStreamUseCase
          * Last-resort route once the web routes keep returning HTTP 403: ask YouTube as the Android VR
          * client, which gets direct audio URLs that don't need the web-only streaming token.
          */
+        private val IOS_PRODUCER =
+            YouTubeClient(
+                clientName = "IOS_PRODUCER",
+                clientVersion = "0.10",
+                clientId = "92",
+                userAgent = "com.google.ios.youtubeproducer/0.10 (iPhone16,2; U; CPU iOS 18_6_2 like Mac OS X;)",
+                osName = "iPhone",
+                osVersion = "18.6.2.22G100",
+                deviceMake = "Apple",
+                deviceModel = "iPhone16,2",
+                friendlyName = "iOS Producer progressive",
+            )
+
         private suspend fun androidVrFallback(request: AudioStreamRequest): ResolvedAudioStream? {
-            val client = YouTubeClient.ANDROID_VR_1_65_10
+            // IOS_PRODUCER (client 92) needs no PO token, login or signature, and returns a direct
+            // muxed itag 18 (360p video + AAC) that downloads and seeks normally. Android VR clients
+            // were tried first but the CDN refuses their second range chunk (HTTP 403).
+            val client = IOS_PRODUCER
             val authState = YTPlayerUtils.anonymousPlaybackAuthState(request.authState)
             val response =
                 YouTube
@@ -376,9 +392,13 @@ class ResolveAudioStreamUseCase
             val format =
                 streaming.adaptiveFormats
                     .filter { it.isAudio && it.mimeType.startsWith("audio/") && !it.url.isNullOrBlank() }
-                    .maxByOrNull { it.bitrate } ?: return null
+                    .maxByOrNull { it.bitrate }
+                    ?: streaming.formats.orEmpty()
+                        .filter { !it.url.isNullOrBlank() && it.audioSampleRate != null }
+                        .maxByOrNull { it.bitrate }
+                    ?: return null
             val url = format.url ?: return null
-            Timber.tag(TAG).i("Web routes refused for %s; using Android VR stream itag=%d", request.mediaId, format.itag)
+            Timber.tag(TAG).i("Web routes refused for %s; using fallback stream itag=%d", request.mediaId, format.itag)
             val codecs = Regex("codecs=\"([^\"]+)\"").find(format.mimeType)?.groupValues?.get(1).orEmpty()
             return ResolvedAudioStream(
                 url = url,
