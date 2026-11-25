@@ -341,10 +341,18 @@ class ResolveAudioStreamUseCase
                     videoId = request.mediaId,
                     authState = baseAuthState,
                 )
-            return youtubeiRepository.resolve(
-                request = request.copy(authState = resolvedAuthState),
-                priority = priority,
-            )
+            return try {
+                youtubeiRepository.resolve(
+                    request = request.copy(authState = resolvedAuthState),
+                    priority = priority,
+                )
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The web route gave no usable audio (e.g. "No direct audio format"); try Android VR.
+                Timber.tag(TAG).w(e, "Web resolve failed for %s; trying Android VR", request.mediaId)
+                androidVrFallback(request) ?: throw e
+            }
         }
 
         /**
