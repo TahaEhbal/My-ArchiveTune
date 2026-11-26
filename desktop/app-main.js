@@ -277,7 +277,63 @@ async function recommended() {
 }
 
 // ---------- streaming via yt-dlp ----------
+// ---------- yt-dlp self-update ----------
+// YouTube changes often break old yt-dlp versions, and the app's small code updates don't carry
+// yt-dlp, so the app fetches new yt-dlp releases itself into its own folder and prefers those.
+const ytBinDir = () => path.join(userData(), 'bin');
+function downloadedYtDlp() {
+  try {
+    const name = fs.readFileSync(path.join(ytBinDir(), 'current.txt'), 'utf8').trim();
+    const f = path.join(ytBinDir(), name);
+    if (/^yt-dlp-[\w.-]+\.exe$/.test(name) && fs.existsSync(f)) return { file: f, version: name.slice(7, -4) };
+  } catch { /* none yet */ }
+  return null;
+}
+function ytDlpVersion(exe) {
+  return new Promise((resolve) => {
+    let out = '';
+    try {
+      const p = spawn(exe, ['--version'], { windowsHide: true });
+      p.stdout.on('data', (d) => (out += d));
+      p.on('error', () => resolve(''));
+      p.on('close', () => resolve(out.trim()));
+    } catch { resolve(''); }
+  });
+}
+let ytDlpUpdating = null, ytDlpCheckedAt = 0;
+function updateYtDlp(force = false) {
+  if (process.platform !== 'win32') return Promise.resolve(false);
+  if (ytDlpUpdating) return ytDlpUpdating;
+  if (!force && Date.now() - ytDlpCheckedAt < 6 * 3600e3) return Promise.resolve(false);
+  ytDlpUpdating = (async () => {
+    ytDlpCheckedAt = Date.now();
+    const res = await fetch('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', { headers: { 'User-Agent': 'ArchiveTune-Desktop' } });
+    if (!res.ok) return false;
+    const rel = await res.json();
+    const tag = String(rel.tag_name || '');
+    const asset = (rel.assets || []).find((a) => a.name === 'yt-dlp.exe');
+    if (!/^[\w.-]+$/.test(tag) || !asset) return false;
+    const have = downloadedYtDlp()?.version || (await ytDlpVersion(ytDlpPath()));
+    if (have && have >= tag) return false; // versions are dates (2026.11.20), so text order works
+    fs.mkdirSync(ytBinDir(), { recursive: true });
+    const dl = await fetch(asset.browser_download_url, { headers: { 'User-Agent': 'ArchiveTune-Desktop' } });
+    if (!dl.ok) return false;
+    const name = `yt-dlp-${tag}.exe`, tmp = path.join(ytBinDir(), name + '.tmp');
+    fs.writeFileSync(tmp, Buffer.from(await dl.arrayBuffer()));
+    if ((await ytDlpVersion(tmp)) === '') { fs.rmSync(tmp, { force: true }); return false; }
+    fs.renameSync(tmp, path.join(ytBinDir(), name));
+    fs.writeFileSync(path.join(ytBinDir(), 'current.txt'), name);
+    for (const f of fs.readdirSync(ytBinDir())) { // old versions not in use any more
+      if (f !== name && /^yt-dlp-.*\.exe$/.test(f)) { try { fs.rmSync(path.join(ytBinDir(), f), { force: true }); } catch { /* still running */ } }
+    }
+    return true;
+  })().catch(() => false).finally(() => { ytDlpUpdating = null; });
+  return ytDlpUpdating;
+}
+
 function ytDlpPath() {
+  const own = downloadedYtDlp();
+  if (own) return own.file;
   const packaged = path.join(process.resourcesPath || '', 'yt-dlp.exe');
   if (fs.existsSync(packaged)) return packaged;
   const dev = path.join(__dirname, 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
@@ -381,7 +437,11 @@ function resolveStream(videoId, prio = 'user', meta) {
       file = await runYtDlp(videoId, false, prio);
     } catch (first) {
       if (first.message === 'cancelled') throw first;
-      try { file = await runYtDlp(videoId, true, prio); } catch { throw new Error(String(first.message).slice(0, 300)); }
+      try { file = await runYtDlp(videoId, true, prio); } catch {
+        // A failure is often YouTube having changed something: get the newest yt-dlp and try again.
+        if (!(await updateYtDlp(true))) throw new Error(String(first.message).slice(0, 300));
+        try { file = await runYtDlp(videoId, true, prio); } catch (e) { throw new Error(String(e.message).slice(0, 300)); }
+      }
     }
     trimCache();
     keepMeta(meta || { id: videoId });
@@ -583,6 +643,16 @@ function statsSummary() {
     topSongs: songs.sort((a, b) => b.plays - a.plays || b.last - a.last).slice(0, 50),
     topArtists: Object.values(artists).sort((a, b) => b.plays - a.plays).slice(0, 30),
   };
+}
+
+// Tell YouTube this song was played, so it lands in the account's history (shared with the phone)
+// and YouTube Music's home and suggestions learn from what's played on the PC too.
+async function addToHistory(id) {
+  if (!signedIn() || !/^[\w-]{11}$/.test(String(id))) return false;
+  const y = await getYt();
+  const info = await y.music.getInfo(id);
+  await info.addToWatchHistory();
+  return true;
 }
 
 // Like / unlike a song on the YouTube account, so it shows up in the phone app too.
@@ -885,6 +955,7 @@ ipcMain.handle('yt:browse', wrap(async (id, params) => {
 }));
 ipcMain.handle('yt:lyrics', wrap(getLyrics));
 ipcMain.handle('stats:play', wrap(async (song) => recordPlay(song)));
+ipcMain.handle('yt:history', wrap(addToHistory));
 ipcMain.handle('stats:get', wrap(async () => statsSummary()));
 ipcMain.handle('yt:like', wrap(setLiked));
 ipcMain.handle('pl:add', wrap(playlistAdd));
@@ -940,6 +1011,8 @@ app.whenReady().then(() => {
   updateThumbar();
   mainWindow.webContents.once('did-finish-load', () => {
     setTimeout(checkForUpdate, 3000);
+    setTimeout(() => updateYtDlp(), 15000);
+    setInterval(() => updateYtDlp(), 6 * 3600e3);
     setInterval(checkForUpdate, 20 * 60 * 1000);
   });
 });

@@ -575,7 +575,7 @@ async function startAudio(song) {
   liveStarting = false;
   urlFor(song).then((file) => {
     if (state.queue[state.index]?.id !== song.id || audio.src === file) return;
-    const t = audio.currentTime, playing = !audio.paused;
+    const t = Math.max(audio.currentTime, typeof takeResume === 'function' ? takeResume(song.id) : 0), playing = !audio.paused;
     audio.src = file;
     audio.addEventListener('loadedmetadata', () => { audio.currentTime = t; if (playing) audio.play().catch(() => {}); }, { once: true });
   }).catch(() => {});
@@ -746,7 +746,11 @@ $('repeat').onclick = () => {
 };
 
 // ---------- controls ----------
-$('play').onclick = () => (audio.paused ? audio.play() : audio.pause());
+const togglePlay = () => {
+  if (!audio.src && state.queue[state.index]) return resumeRestored();
+  return audio.paused ? audio.play() : audio.pause();
+};
+$('play').onclick = togglePlay;
 $('next').onclick = () => next(false);
 $('prev').onclick = prev;
 audio.addEventListener('play', () => ($('play').innerHTML = ic('pause')));
@@ -785,14 +789,14 @@ audio.addEventListener('timeupdate', () => {
 let seeking = false;
 $('bar').addEventListener('input', () => { seeking = true; });
 $('bar').addEventListener('change', () => { if (durOf()) audio.currentTime = ($('bar').value / 1000) * durOf(); seeking = false; });
-$('vol').addEventListener('input', () => { audio.volume = $('vol').value / 100; $('vol').style.setProperty('--p', $('vol').value + '%'); });
+$('vol').addEventListener('input', () => { setVolume(Number($('vol').value)); saveSession(true); });
 $('vol').style.setProperty('--p', '80%');
 audio.volume = 0.8;
 
 if ('mediaSession' in navigator) {
   navigator.mediaSession.setActionHandler('nexttrack', () => next(false));
   navigator.mediaSession.setActionHandler('previoustrack', prev);
-  navigator.mediaSession.setActionHandler('play', () => audio.play());
+  navigator.mediaSession.setActionHandler('play', () => (audio.src ? audio.play() : togglePlay()));
   navigator.mediaSession.setActionHandler('pause', () => audio.pause());
 }
 document.addEventListener('keydown', (e) => {
@@ -919,8 +923,85 @@ audio.addEventListener('timeupdate', () => {
   if (song && countedFor !== song.id && audio.currentTime >= 30) {
     countedFor = song.id;
     window.api.recordPlay({ id: song.id, title: song.title, artist: song.artist, thumbnail: song.thumbnail, seconds: audio.duration || 0 });
+    window.api.addHistory?.(song.id).catch(() => {});
   }
 });
+
+// ---------- remember where you left off ----------
+// The queue, the song, the position, the volume and repeat survive closing the app. Nothing plays by
+// itself on launch: press play and it carries on from the same spot.
+const SESSION_KEY = 'session:v1';
+let resumeAt = 0;
+let pendingResume = null;
+let lastSessionSave = 0;
+function saveSession(force) {
+  if (!force && Date.now() - lastSessionSave < 5000) return;
+  lastSessionSave = Date.now();
+  try {
+    const start = Math.max(0, state.index - 50);
+    const queue = state.queue.slice(start, start + 600).map(metaOf);
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      queue, index: state.index - start, pos: audio.src ? audio.currentTime : resumeAt,
+      vol: Number($('vol').value), repeat: repeatMode,
+    }));
+  } catch { /* storage unavailable */ }
+}
+function setVolume(v) {
+  v = Math.min(100, Math.max(0, Math.round(v)));
+  $('vol').value = v;
+  $('vol').style.setProperty('--p', v + '%');
+  audio.volume = v / 100;
+}
+function restoreSession() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch { /* none */ }
+  if (!saved) return;
+  if (Number.isFinite(saved.vol)) setVolume(saved.vol);
+  while (saved.repeat && REPEAT_TITLES[saved.repeat] && repeatMode !== saved.repeat) {
+    repeatMode = repeatMode === 'all' ? 'one' : repeatMode === 'one' ? 'off' : 'all';
+  }
+  $('repeat').classList.toggle('on', repeatMode !== 'off');
+  $('rep1').textContent = repeatMode === 'one' ? '1' : '';
+  $('repeat').title = REPEAT_TITLES[repeatMode];
+  const queue = Array.isArray(saved.queue) ? saved.queue.filter((x) => x && /^[\w-]{11}$/.test(x.id)) : [];
+  const song = queue[saved.index];
+  if (!song) return;
+  state.queue = queue;
+  state.index = saved.index;
+  resumeAt = Number(saved.pos) || 0;
+  showSong(song);
+  $('cur').textContent = fmt(resumeAt);
+  if (song.duration) {
+    $('dur').textContent = fmt(song.duration);
+    $('bar').value = Math.min(1000, (resumeAt / song.duration) * 1000);
+    $('bar').style.setProperty('--p', Math.min(100, (resumeAt / song.duration) * 100) + '%');
+  }
+  setStatus('Press play to carry on where you left off');
+}
+// Play from the restored spot the first time play is pressed after launch.
+async function resumeRestored() {
+  const song = state.queue[state.index];
+  if (!song) return;
+  const at = resumeAt;
+  resumeAt = 0;
+  pickedByUser = true;
+  pendingResume = at > 2 ? { id: song.id, at } : null;
+  await playCurrent();
+  // A song saved on disk can seek straight away; one still downloading seeks when its file is ready.
+  if (pendingResume && state.queue[state.index]?.id === song.id && audio.src.startsWith('file:')) {
+    const seek = () => { const t = takeResume(song.id); if (t && durOf() && t < durOf() - 3) audio.currentTime = t; };
+    if (audio.readyState >= 1) seek(); else audio.addEventListener('loadedmetadata', seek, { once: true });
+  }
+}
+function takeResume(id) {
+  if (!pendingResume || pendingResume.id !== id) return 0;
+  const t = pendingResume.at;
+  pendingResume = null;
+  return t;
+}
+audio.addEventListener('timeupdate', () => saveSession(false));
+audio.addEventListener('pause', () => saveSession(true));
+window.addEventListener('beforeunload', () => saveSession(true));
 
 // ---------- right-click menu ----------
 function toast(msg) {
@@ -1423,3 +1504,5 @@ $('list').addEventListener('click', (e) => {
   if (e.target.closest('[data-play]')) return playFromList(songs, songs[Math.floor(Math.random() * songs.length)].id);
   openPage({ title: it.title, load: async () => ({ header: { title: it.title, subtitle: it.artist, thumbnail: it.thumbnail }, kindLabel: 'Made for you', sections: [{ title: '', items: songs }] }) });
 }, true);
+
+try { restoreSession(); } catch (e) { console.warn('restore failed', e); }

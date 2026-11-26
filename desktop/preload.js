@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('api', {
   browse: (id, params) => ipcRenderer.invoke('yt:browse', id, params),
   lyrics: (song) => ipcRenderer.invoke('yt:lyrics', song),
   recordPlay: (song) => ipcRenderer.invoke('stats:play', song),
+  addHistory: (id) => ipcRenderer.invoke('yt:history', id),
   stats: () => ipcRenderer.invoke('stats:get'),
   like: (id, liked) => ipcRenderer.invoke('yt:like', id, liked),
   playlistAdd: (pid, vid) => ipcRenderer.invoke('pl:add', pid, vid),
