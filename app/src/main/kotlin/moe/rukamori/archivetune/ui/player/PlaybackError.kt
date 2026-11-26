@@ -203,6 +203,12 @@ fun PlaybackErrorDialog(
                     appendLine()
                     appendLine(it)
                 }
+                val recentLog = moe.rukamori.archivetune.utils.PlaybackDiagnostics.dump()
+                if (recentLog.isNotBlank()) {
+                    appendLine()
+                    appendLine("Recent log:")
+                    appendLine(recentLog)
+                }
             }.trim()
         }
     var copiedKey by remember(report) { mutableStateOf<String?>(null) }
@@ -1515,14 +1521,7 @@ private fun playbackErrorCauseChain(
             throwable = throwable.cause
             depth++
         }
-
-        val recentLog = moe.rukamori.archivetune.utils.PlaybackDiagnostics.dump()
-        if (recentLog.isNotBlank()) {
-            appendLine()
-            appendLine("Recent log:")
-            appendLine(recentLog)
-        }
-    }.trim()
+    }
 
 private const val PlaybackErrorReportKey = "report"
 private val PlaybackErrorCompactMaxWidth: Dp = 460.dp
