@@ -27,7 +27,7 @@ jobs:
       contents: write
 
     env:
-      VERSION_NAME: 15.1.${{ github.run_number }}
+      VERSION_NAME: 16.1.${{ github.run_number }}
       VERSION_CODE: ${{ github.run_number }}
 
     steps:

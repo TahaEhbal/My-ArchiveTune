@@ -30,6 +30,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
 class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
+    private companion object {
+        const val MAX_LYRICS_BYTES = 1024 * 1024
+        const val MAX_ENGINES = 4
+    }
+
     private val applicationContext = context.applicationContext
     private val lock = Mutex()
     private val engines = LinkedHashMap<String, Engine>(8, 0.75f, true)
@@ -58,8 +63,8 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
             }
         } ?: throw ModuleException(ModuleFailure.TIMEOUT)
 
-    suspend fun search(id: String, source: String, origin: String, query: String, settings: Map<String, String>): List<ModuleTrack> {
-        val result = call(id, source, origin, "searchTracks", JSONArray().put(query).put(10).put(context(settings)))
+    suspend fun search(id: String, source: String, origin: String, query: String, settings: Map<String, String>, song: ModuleSong? = null): List<ModuleTrack> {
+        val result = call(id, source, origin, "searchTracks", JSONArray().put(query).put(10).put(context(settings, song = song)))
         val tracks = when (result) {
             is JSONArray -> result
             is JSONObject -> result.optJSONArray("tracks")
@@ -87,9 +92,30 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
         }
     }
 
-    suspend fun stream(id: String, source: String, origin: String, trackId: String, settings: Map<String, String>, metadata: ModuleTrack? = null): ModuleStream {
+    suspend fun playbackError(id: String, source: String, origin: String, trackId: String, failure: ModulePlaybackFailure,
+        settings: Map<String, String>, metadata: ModuleTrack? = null, song: ModuleSong? = null): ModulePlaybackDecision {
+        val value = call(id, source, origin, "onPlaybackError",
+            JSONArray().put(failure.json(trackId)).put(context(settings, metadata, song)))
+        val decision = when (value) {
+            JSONObject.NULL -> return ModulePlaybackDecision.Default
+            is String -> JSONObject().put("action", value)
+            is JSONObject -> value
+            else -> throw ModuleException(ModuleFailure.EXECUTION, stage = ModuleLoadStage.PROVIDER, diagnosticCode = "INVALID_PLAYBACK_DECISION")
+        }
+        return when (decision.optString("action").lowercase(java.util.Locale.ROOT)) {
+            "retry" -> ModulePlaybackDecision.Retry
+            "fallback" -> ModulePlaybackDecision.Fallback
+            "fail" -> ModulePlaybackDecision.Fail(decision.opt("message") as? String)
+            "", "default" -> ModulePlaybackDecision.Default
+            else -> throw ModuleException(ModuleFailure.EXECUTION, stage = ModuleLoadStage.PROVIDER, diagnosticCode = "INVALID_PLAYBACK_DECISION")
+        }
+    }
+
+    suspend fun stream(id: String, source: String, origin: String, trackId: String, settings: Map<String, String>, metadata: ModuleTrack? = null,
+        song: ModuleSong? = null, retry: ModulePlaybackFailure? = null): ModuleStream {
         val quality = settings["quality"]?.let(::parseJsonValue) ?: JSONObject.NULL
-        val value = call(id, source, origin, "getTrackStreamUrl", JSONArray().put(trackId).put(quality).put(context(settings, metadata))) as? JSONObject
+        val value = call(id, source, origin, "getTrackStreamUrl", JSONArray().put(trackId).put(quality)
+            .put(context(settings, metadata, song).apply { retry?.let { put("playbackError", it.json(trackId)) } })) as? JSONObject
             ?: throw ModuleException(ModuleFailure.EXECUTION, stage = ModuleLoadStage.PROVIDER, diagnosticCode = "INVALID_STREAM_RESULT")
         val url = ModuleHttpClient.webUrl(value.text("streamUrl").ifBlank { value.text("url") })
         val track = value.optJSONObject("track") ?: JSONObject()
@@ -141,6 +167,52 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
             track.text("sourceId").ifBlank { track.text("id") }.ifBlank { trackId }, inline, value.optJSONArray("allowedDomains").strings())
     }
 
+    suspend fun lyrics(id: String, source: String, origin: String, settings: Map<String, String>, song: ModuleSong): List<ModuleLyrics> {
+        val values = when (val value = call(id, source, origin, ModuleCapabilities.LYRICS, JSONArray().put(song.json()).put(context(settings, song = song)))) {
+            JSONObject.NULL -> return emptyList()
+            is JSONObject -> JSONArray().put(value)
+            is JSONArray -> value
+            else -> invalidContent("INVALID_LYRICS_RESULT")
+        }
+        if (values.length() > 8) invalidContent("INVALID_LYRICS_RESULT")
+        return (0 until values.length()).map { index ->
+            val item = values.opt(index) as? JSONObject ?: invalidContent("INVALID_LYRICS_RESULT")
+            val format = ModuleLyricsFormat.of(item.optString("format").lowercase(java.util.Locale.ROOT)) ?: invalidContent("INVALID_LYRICS_FORMAT")
+            val text = (item.opt("lyrics") ?: item.opt("text")) as? String ?: invalidContent("INVALID_LYRICS_RESULT")
+            if (text.isBlank() || text.toByteArray(Charsets.UTF_8).size > MAX_LYRICS_BYTES) invalidContent("INVALID_LYRICS_RESULT")
+            ModuleLyrics(format, text, contentText(item, "author", 256), contentUrl(item, "sourceUrl"))
+        }
+    }
+
+    suspend fun trackMetadata(id: String, source: String, origin: String, settings: Map<String, String>, song: ModuleSong): ModuleTrackDetails? {
+        val value = call(id, source, origin, ModuleCapabilities.METADATA, JSONArray().put(song.json()).put(context(settings, song = song)))
+        if (value == JSONObject.NULL) return null
+        val item = value as? JSONObject ?: invalidContent("INVALID_METADATA_RESULT")
+        val bpm = item.opt("bpm")?.takeUnless { it == JSONObject.NULL }?.let {
+            (it as? Number)?.toDouble()?.takeIf { number -> number.isFinite() && number > 0 && number < 1000 } ?: invalidContent("INVALID_METADATA_RESULT")
+        }
+        val explicit = item.opt("explicit")?.takeUnless { it == JSONObject.NULL }?.let { it as? Boolean ?: invalidContent("INVALID_METADATA_RESULT") }
+        return ModuleTrackDetails(
+            contentText(item, "title"), contentList(item, "artists"), contentText(item, "album"), contentText(item, "albumArtist"),
+            contentText(item, "releaseDate", 64), contentList(item, "genres"), contentText(item, "label"), contentText(item, "isrc", 32),
+            contentText(item, "upc", 32), contentList(item, "composers"), contentList(item, "lyricists"), contentList(item, "producers"),
+            contentText(item, "copyright"), bpm, contentText(item, "key", 32), contentText(item, "language", 64), explicit,
+            contentUrl(item, "artworkUrl", secure = true), contentUrl(item, "url"), contentText(item, "description", 8192),
+        ).takeUnless { it.isEmpty }
+    }
+
+    suspend fun canvas(id: String, source: String, origin: String, settings: Map<String, String>, song: ModuleSong): ModuleCanvas? {
+        val value = call(id, source, origin, ModuleCapabilities.CANVAS, JSONArray().put(song.json()).put(context(settings, song = song)))
+        if (value == JSONObject.NULL) return null
+        val item = value as? JSONObject ?: invalidContent("INVALID_CANVAS_RESULT")
+        val canvas = ModuleCanvas(contentText(item, "title"), contentText(item, "artist"),
+            contentUrl(item, "videoUrl", secure = true), contentUrl(item, "videoUrlVertical", secure = true),
+            contentUrl(item, "animated", secure = true), contentUrl(item, "animatedVertical", secure = true),
+            contentUrl(item, "staticImage", secure = true))
+        if (listOf(canvas.videoUrl, canvas.videoUrlVertical, canvas.animated, canvas.animatedVertical).all { it == null }) invalidContent("INVALID_CANVAS_RESULT")
+        return canvas
+    }
+
     suspend fun authorize(id: String, source: String, origin: String): String? = withContext(Dispatchers.Default) { withTimeout(30_000) {
         lock.withLock {
             val engine = create(source, origin, id)
@@ -175,6 +247,7 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
     suspend fun forget(id: String) = withContext(Dispatchers.IO) {
         unload(id)
         ModuleRuntimeStorage(applicationContext, id).remove()
+        ModuleAppAttestation(applicationContext, id).remove()
     }
 
     suspend fun unload(id: String) {
@@ -188,7 +261,7 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
                 engines.remove(id)?.close()
                 engine = create(source, origin, id)
                 engines[id] = engine
-                while (engines.size > 2) engines.remove(engines.keys.first())?.close()
+                while (engines.size > MAX_ENGINES) engines.remove(engines.keys.first())?.close()
             }
             val session = checkNotNull(engine)
             val runtime = session.runtime
@@ -236,10 +309,16 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
                     val detail = listOf(name, code, envelope.optString("frame"), problem?.code.orEmpty()).filter(String::isNotBlank).joinToString("/")
                     throw ModuleException(failure, stage = ModuleLoadStage.PROVIDER, diagnosticCode = detail)
                 }
-                if (!envelope.has("value") || envelope.isNull("value")) {
+                if ((!envelope.has("value") || envelope.isNull("value")) && function != ModuleCapabilities.PLAYBACK_ERROR &&
+                    function !in ModuleCapabilities.content) {
                     throw ModuleException(ModuleFailure.EXECUTION, stage = ModuleLoadStage.PROVIDER, diagnosticCode = "INVALID_RESULT")
                 }
-                val value = envelope.get("value")
+                val value = envelope.opt("value") ?: JSONObject.NULL
+                if (function == ModuleCapabilities.CANVAS && value is JSONObject) session.host.networkPermissions?.let { permissions ->
+                    listOf("videoUrl", "videoUrlVertical", "animated", "animatedVertical", "staticImage")
+                        .mapNotNull { key -> (value.opt(key) as? String)?.takeIf(String::isNotBlank) }
+                        .forEach(permissions::requireAllowed)
+                }
                 if (function == "getTrackStreamUrl" && value is JSONObject) session.host.domains?.let { domains ->
                     session.host.networkPermissions?.requireAllowed(value.optString("streamUrl", value.optString("url")))
                     value.put("allowedDomains", JSONArray(domains))
@@ -284,13 +363,23 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
             engine.function("__moduleExtensionCall") { args -> extensionHost.invoke(args.firstOrNull()?.toString().orEmpty()) }
             engine.asyncFunction<String, String>("__moduleFetch") { json ->
                 try {
-                    http.fetch(json, origin, namespace, extensionHost.networkPermissions) { status ->
+                    http.fetch(json, origin, namespace, extensionHost.networkPermissions, extensionHost.requestSigner) { status ->
                         if (status !in 200..299) requestProblem.set(RequestProblem(ModuleFailure.NETWORK, "HTTP_$status"))
                     }
                 } catch (error: CancellationException) { throw error }
                 catch (error: Exception) {
                     val failure = (error as? ModuleException)?.failure ?: ModuleFailure.NETWORK
-                    requestProblem.set(RequestProblem(failure, "REQUEST_${failure.name}"))
+                    requestProblem.set(RequestProblem(failure, (error as? ModuleException)?.diagnosticCode
+                        ?.takeIf { it.startsWith("ATTESTATION_") } ?: "REQUEST_${failure.name}"))
+                    throw error
+                }
+            }
+            engine.asyncFunction<String, String>("__moduleAttest") { nonce ->
+                try { withContext(Dispatchers.IO) { extensionHost.attest(nonce) }.toString() }
+                catch (error: CancellationException) { throw error }
+                catch (error: Exception) {
+                    val failure = (error as? ModuleException)?.failure ?: ModuleFailure.EXECUTION
+                    requestProblem.set(RequestProblem(failure, (error as? ModuleException)?.diagnosticCode ?: "ATTESTATION_${failure.name}"))
                     throw error
                 }
             }
@@ -366,9 +455,11 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
                 "displayName:p.displayName,homepage:p.homepage,repository:p.repository,license:p.license,type:p.type," +
                 "minAppVersion:p.minAppVersion,requiredRuntimeFeatures:p.requiredRuntimeFeatures,iconBase64:p.iconBase64,authentication:p.authentication," +
                 "labels:[...(Array.isArray(p.labels)?p.labels:[]),...(Array.isArray(p.tags)?p.tags:[])]," +
-                "settings:p.settings||{},capabilities:['searchTracks','getTrackStreamUrl','getAlbum','getArtist','getPlaylist'].filter(k=>typeof p[k]==='function')};})());",
+                "settings:p.settings||{},capabilities:" + JSONArray(ModuleCapabilities.known) + ".filter(k=>typeof p[k]==='function')};})());",
         )
-        return ModuleManifest.parse(JSONObject(manifest).put("authentication", host.authentication))
+        val parsed = ModuleManifest.parse(JSONObject(manifest).put("authentication", host.authentication).put("appAttestation", host.attestationDeclared))
+        host.attestedModule = if (parsed.appAttestation) parsed.id else null
+        return parsed
     }
 
     private suspend fun evaluate(runtime: QuickJs, host: ModuleExtensionHost, code: String, filename: String = "module-manifest.js"): String =
@@ -379,12 +470,44 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
         try { work.await() } catch (error: CancellationException) { host.cancel(); throw error }
     }
 
+    private fun invalidContent(code: String): Nothing =
+        throw ModuleException(ModuleFailure.EXECUTION, stage = ModuleLoadStage.PROVIDER, diagnosticCode = code)
+
+    private fun contentText(item: JSONObject, key: String, limit: Int = 2048): String? {
+        val value = item.opt(key)?.takeUnless { it == JSONObject.NULL } ?: return null
+        val text = when (value) {
+            is String -> value.trim()
+            is Number -> value.toString()
+            else -> invalidContent("INVALID_CONTENT_FIELD")
+        }
+        if (text.length > limit) invalidContent("INVALID_CONTENT_FIELD")
+        return text.takeIf(String::isNotEmpty)
+    }
+
+    private fun contentList(item: JSONObject, key: String): List<String> {
+        val value = item.opt(key)?.takeUnless { it == JSONObject.NULL } ?: return emptyList()
+        val values = when (value) {
+            is String -> listOf(value)
+            is JSONArray -> (0 until value.length()).map { value.opt(it) as? String ?: invalidContent("INVALID_CONTENT_FIELD") }
+            else -> invalidContent("INVALID_CONTENT_FIELD")
+        }.map(String::trim).filter(String::isNotEmpty).distinct()
+        if (values.size > 32 || values.any { it.length > 512 }) invalidContent("INVALID_CONTENT_FIELD")
+        return values
+    }
+
+    private fun contentUrl(item: JSONObject, key: String, secure: Boolean = false): String? {
+        val value = contentText(item, key) ?: return null
+        val url = try { ModuleHttpClient.webUrl(value) } catch (_: ModuleException) { invalidContent("INVALID_CONTENT_URL") }
+        if (secure && !url.startsWith("https://")) invalidContent("INVALID_CONTENT_URL")
+        return url
+    }
+
     private fun JSONObject.text(key: String): String = when (val value = opt(key)) {
         is String, is Number -> value.toString()
         else -> ""
     }
 
-    private fun context(settings: Map<String, String>, track: ModuleTrack? = null): JSONObject = JSONObject()
+    private fun context(settings: Map<String, String>, track: ModuleTrack? = null, song: ModuleSong? = null): JSONObject = JSONObject()
         .put("settings", JSONObject().apply {
             settings.forEach { (key, value) -> put(key, JSONObject().put("value", parseJsonValue(value))) }
         }).apply {
@@ -394,5 +517,6 @@ class ModuleRuntime(context: Context, private val http: ModuleHttpClient) {
                     .put("album", it.album).put("duration", it.durationSeconds).put("explicit", it.explicit).put("isrc", it.identifier)
                 put("track", metadata).put("metadata", metadata).put("item", metadata)
             }
+            put("song", song?.json() ?: JSONObject.NULL)
         }
 }

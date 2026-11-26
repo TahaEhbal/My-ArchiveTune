@@ -16,7 +16,7 @@ import java.io.ByteArrayOutputStream
 import java.net.URI
 
 object ModuleExtensionReader {
-    private val runtimeFeatures = setOf("signedSession@3", "sessionGrant@1", "downloadSegments@1", "preparedContext@1")
+    private val runtimeFeatures = setOf("signedSession@3", "sessionGrant@1", "downloadSegments@1", "preparedContext@1", ModuleAppAttestation.FEATURE, ModuleSong.FEATURE)
 
     fun isManifest(value: JSONObject): Boolean = value.opt("name") is String && value.opt("version") is String &&
         (value.has("permissions") || value.optJSONArray("type")?.strings()?.any { it.endsWith("_provider") } == true)
@@ -105,7 +105,7 @@ object ModuleExtensionReader {
         }
         if (arch) {
             val declared = metadata.getJSONArray("capabilities")
-            val known = listOf("searchTracks", "getTrackStreamUrl", "getAlbum", "getArtist", "getPlaylist")
+            val known = ModuleCapabilities.known
             val values = (0 until declared.length()).map { declared.get(it) as? String ?: invalid("CAPABILITIES") }
             if (values.size != values.distinct().size || values.any { it !in known } || !values.containsAll(known.take(2))) invalid("CAPABILITIES")
             metadata.put("declaredCapabilities", declared)

@@ -12,6 +12,7 @@ import androidx.annotation.StringRes
 import androidx.compose.runtime.Immutable
 import com.google.common.collect.ImmutableList
 import moe.rukamori.archivetune.R
+import moe.rukamori.archivetune.modules.ModuleTrackDetailsResult
 
 @Immutable
 sealed interface MediaInfoState<out T> {
@@ -72,6 +73,7 @@ data class MediaInfoData(
     val local: MediaInfoState<LocalMediaInfo>,
     val metadata: MediaInfoState<MediaInfoMetadata>,
     val statistics: MediaInfoState<MediaInfoStatistics>,
+    val module: MediaInfoState<ModuleTrackDetailsResult>,
 )
 
 enum class MediaInfoTab(@param:StringRes val labelRes: Int) {
@@ -84,10 +86,23 @@ enum class MediaInfoTab(@param:StringRes val labelRes: Int) {
 data class MediaInfoQuickFact(@param:DrawableRes val iconRes: Int, val text: String)
 
 @Immutable
-data class MediaInfoDetail(@param:StringRes val labelRes: Int, val value: String?)
+data class MediaInfoDetail(
+    @param:StringRes val labelRes: Int,
+    val value: String?,
+    @param:StringRes val valueRes: Int? = null,
+)
 
 @Immutable
-data class MediaInfoMetric(@param:StringRes val labelRes: Int, val value: String?)
+data class MediaInfoModuleDetails(val moduleName: String, val items: ImmutableList<MediaInfoDetail>)
+
+@Immutable
+data class MediaInfoNumbers(
+    val views: String?,
+    val likes: String?,
+    val dislikes: String?,
+    val subscribers: String?,
+    val likeRatio: Float?,
+)
 
 @Immutable
 data class MediaInfoUiModel(
@@ -98,10 +113,11 @@ data class MediaInfoUiModel(
     val metadata: MediaInfoState<MediaInfoMetadata>,
     val descriptionState: MediaInfoState<String>,
     val technicalDetails: MediaInfoState<ImmutableList<MediaInfoDetail>>,
+    val moduleDetails: MediaInfoState<MediaInfoModuleDetails>,
     val statistics: MediaInfoState<MediaInfoStatistics>,
     val overview: ImmutableList<MediaInfoDetail>,
     val quickFacts: ImmutableList<MediaInfoQuickFact>,
-    val metrics: ImmutableList<MediaInfoMetric>,
+    val numbers: MediaInfoNumbers,
 )
 
 sealed interface MediaInfoEvent {

@@ -164,19 +164,25 @@ object YTPlayerUtils {
 
     @Volatile private var lastSuccessfulClientKey: String? = null
 
+    @Volatile private var anonymousFallbackVisitorData: String? = null
+
     fun clearPlaybackAuthCaches() {
         streamUrlCache.clear()
         playbackDataCache.clear()
         failedStreamClientsUntil.clear()
         lastSuccessfulClientKey = null
+        anonymousFallbackVisitorData = null
+    }
+
+    fun resetAnonymousFallbackSession() {
+        anonymousFallbackVisitorData = null
     }
 
     suspend fun recoverFromBadStreamPlayerResponse(videoId: String) {
         BotGuardTokenGenerator.invalidateAll()
         val authState =
-            YouTube
-                .currentPlaybackAuthState()
-                .copy(
+            YouTube.updateAuthState { current ->
+                current.copy(
                     poToken = null,
                     poTokenGvs = null,
                     poTokenGvsSession = null,
@@ -186,17 +192,14 @@ object YTPlayerUtils {
                     poTokenSubs = null,
                     poTokenSubsVideoId = null,
                     webClientPoTokenEnabled = false,
-                ).normalized()
-        val refreshedAuthState =
-            ensureVisitorDataReady(
-                videoId = videoId,
-                authState = authState,
-                forceRefresh = true,
-                reason = "all stream clients failed",
-            )
-        if (refreshedAuthState.fingerprint != authState.fingerprint) {
-            YouTube.authState = refreshedAuthState
-        }
+                )
+            }
+        ensureVisitorDataReady(
+            videoId = videoId,
+            authState = authState,
+            forceRefresh = true,
+            reason = "all stream clients failed",
+        )
         clearPlaybackAuthCaches()
     }
 
@@ -324,8 +327,8 @@ object YTPlayerUtils {
         videoId: String,
         authState: PlaybackAuthState,
     ): PlaybackAuthState {
-        val sessionId = authState.sessionId ?: return authState
-        val tokenResult = BotGuardTokenGenerator.mintToken(videoId, sessionId) ?: return authState
+        val contentBinding = authState.poTokenContentBinding() ?: authState.sessionId ?: return authState
+        val tokenResult = BotGuardTokenGenerator.mintToken(videoId, contentBinding) ?: return authState
         return authState.withGeneratedPoTokens(videoId, tokenResult)
     }
 
@@ -380,39 +383,60 @@ object YTPlayerUtils {
             if (!authState.hasLoginCookie && authState.visitorData.isNullOrBlank()) {
                 youtubeiVisitorMutex.withLock {
                     val currentAuthState = YouTube.currentPlaybackAuthState()
+                    val sharesActiveSession =
+                        authState.cookie == currentAuthState.cookie &&
+                            authState.dataSyncId == currentAuthState.dataSyncId
+                    val knownVisitorData =
+                        if (sharesActiveSession) currentAuthState.visitorData else anonymousFallbackVisitorData
                     val visitorData =
-                        currentAuthState.visitorData
-                            ?.takeIf {
-                                it.isNotBlank() &&
-                                    authState.cookie == currentAuthState.cookie &&
-                                    authState.dataSyncId == currentAuthState.dataSyncId
-                            }
+                        knownVisitorData?.takeIf(String::isNotBlank)
                             ?: YouTube.visitorData().getOrThrow().trim().takeIf(String::isNotBlank)
                             ?: throw IllegalStateException("YouTube returned empty playback visitor data")
-                    if (authState.hasSamePlaybackSession(YouTube.currentPlaybackAuthState())) {
-                        YouTube.visitorData = visitorData
+                    if (sharesActiveSession) {
+                        YouTube.updateAuthState { latest ->
+                            if (authState.hasSamePlaybackSession(latest)) {
+                                latest.copy(visitorData = visitorData)
+                            } else {
+                                latest
+                            }
+                        }
+                    } else {
+                        anonymousFallbackVisitorData = visitorData
                     }
                     authState.copy(visitorData = visitorData).normalized()
                 }
             } else {
                 authState
             }
-        val contentBinding = resolvedAuthState.youtubeiContentBinding()
+        return resolvedAuthState.withGeneratedPoTokens(videoId, mintRequiredYoutubeiPoTokens(videoId, resolvedAuthState))
+    }
+
+    suspend fun mintYoutubeiPoTokens(
+        videoId: String,
+        authState: PlaybackAuthState,
+    ): PoTokenResult =
+        mintRequiredYoutubeiPoTokens(videoId, authState).also { tokenResult ->
+            authState.withGeneratedPoTokens(videoId, tokenResult)
+        }
+
+    private suspend fun mintRequiredYoutubeiPoTokens(
+        videoId: String,
+        authState: PlaybackAuthState,
+    ): PoTokenResult {
+        val contentBinding = authState.poTokenContentBinding()
             ?: throw InvalidPlaybackLoginContextException(
                 videoId = videoId,
                 targetUrl = "https://music.youtube.com/watch?v=$videoId",
                 cause = IllegalStateException("YouTube playback token binding is missing"),
             )
-        val tokenResult =
-            BotGuardTokenGenerator.mintRequiredToken(
-                videoId = videoId,
-                sessionId = contentBinding,
-            )
-        return resolvedAuthState.withGeneratedPoTokens(videoId, tokenResult)
+        return BotGuardTokenGenerator.mintRequiredToken(
+            videoId = videoId,
+            sessionId = contentBinding,
+        )
     }
 
     suspend fun preWarmYoutubeiPoTokens(authState: PlaybackAuthState) {
-        val contentBinding = authState.youtubeiContentBinding() ?: return
+        val contentBinding = authState.poTokenContentBinding() ?: return
         BotGuardTokenGenerator.preWarm(contentBinding)
     }
 
@@ -420,7 +444,7 @@ object YTPlayerUtils {
         videoId: String,
         tokenResult: PoTokenResult,
     ): PlaybackAuthState {
-        val updatedAuthState =
+        fun PlaybackAuthState.withTokens(): PlaybackAuthState =
             copy(
                 poTokenGvs = tokenResult.playerToken,
                 poTokenGvsSession = tokenResult.sessionToken,
@@ -430,23 +454,13 @@ object YTPlayerUtils {
                 poTokenSubs = tokenResult.playerToken,
                 poTokenSubsVideoId = videoId,
                 webClientPoTokenEnabled = true,
-            ).normalized()
-        val currentAuthState = YouTube.currentPlaybackAuthState()
-        if (hasSamePlaybackSession(currentAuthState)) {
-            YouTube.authState =
-                currentAuthState
-                    .copy(
-                        poTokenGvs = tokenResult.playerToken,
-                        poTokenGvsSession = tokenResult.sessionToken,
-                        poTokenGvsVideoId = videoId,
-                        poTokenPlayer = tokenResult.playerToken,
-                        poTokenPlayerVideoId = videoId,
-                        poTokenSubs = tokenResult.playerToken,
-                        poTokenSubsVideoId = videoId,
-                        webClientPoTokenEnabled = true,
-                    ).normalized()
+            )
+
+        val requestAuthState = this
+        YouTube.updateAuthState { current ->
+            if (requestAuthState.hasSamePlaybackSession(current)) current.withTokens() else current
         }
-        return updatedAuthState
+        return withTokens().normalized()
     }
 
     private fun PlaybackAuthState.hasSamePlaybackSession(other: PlaybackAuthState): Boolean =
@@ -454,56 +468,15 @@ object YTPlayerUtils {
             visitorData == other.visitorData &&
             dataSyncId == other.dataSyncId
 
-    private fun PlaybackAuthState.youtubeiContentBinding(): String? {
+    private fun PlaybackAuthState.poTokenContentBinding(): String? {
         if (!hasLoginCookie) return visitorData?.trim()?.takeIf(String::isNotBlank)
-        val normalizedDataSyncId = dataSyncId?.trim()?.takeIf(String::isNotBlank)
-        if (normalizedDataSyncId != null) {
-            return if ("||" in normalizedDataSyncId) {
-                normalizedDataSyncId
-            } else {
-                "$normalizedDataSyncId||"
-            }
+        val normalizedDataSyncId = dataSyncId?.trim()?.takeIf(String::isNotBlank) ?: return null
+        return if ("||" in normalizedDataSyncId) {
+            normalizedDataSyncId
+        } else {
+            "$normalizedDataSyncId||"
         }
-        return sessionId
     }
-
-    /**
-     * True if the signed-in stream route (WEB_CREATOR, tied to the account) was refused with a
-     * recoverable HTTP error for this video recently, so the next attempt should use the anonymous
-     * route instead.
-     */
-    fun isSignedInStreamRouteBlocked(videoId: String): Boolean {
-        val marker = ":$videoId:WEB_CREATOR@"
-        val now = System.currentTimeMillis()
-        return failedStreamClientsUntil.entries.any { (key, until) -> until > now && key.contains(marker) }
-    }
-
-    /**
-     * True if the plain web route (MWEB, what the anonymous retry uses) was refused for this video
-     * too. YouTube is moving web clients to a streaming protocol that plain URLs can't fetch, so
-     * after this the resolver switches to the Android VR client, which still hands out direct URLs.
-     */
-    fun isAnonymousWebRouteBlocked(videoId: String): Boolean {
-        val marker = ":$videoId:MWEB@"
-        val now = System.currentTimeMillis()
-        return failedStreamClientsUntil.entries.any { (key, until) -> until > now && key.contains(marker) }
-    }
-
-    /** The same session without the account cookie or any account-bound tokens. */
-    fun anonymousPlaybackAuthState(authState: PlaybackAuthState): PlaybackAuthState =
-        authState
-            .copy(
-                cookie = null,
-                dataSyncId = null,
-                poToken = null,
-                poTokenGvs = null,
-                poTokenGvsSession = null,
-                poTokenGvsVideoId = null,
-                poTokenPlayer = null,
-                poTokenPlayerVideoId = null,
-                poTokenSubs = null,
-                poTokenSubsVideoId = null,
-            ).normalized()
 
     private fun PlaybackAuthState.withoutAccountBoundPlaybackState(): PlaybackAuthState =
         copy(

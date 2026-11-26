@@ -5,9 +5,10 @@ It applies to ArchiveTune builds containing `ModulePackageReader`, older release
 do not acquire ZIP package support by renaming a file. The package and API version
 numbers are independent of your provider's own version.
 
-A module supplies alternative audio for an existing song. ArchiveTune keeps the
-song's identity, displayed metadata, library entry, and queue position. Modules
-do not add a source picker, music search destination, or browsing screen.
+A module supplies alternative audio, lyrics, track details, or canvas video for an
+existing song. ArchiveTune keeps the song's identity, displayed metadata, library
+entry, and queue position. Modules do not add a source picker, music search
+destination, or browsing screen.
 
 No provider, account, endpoint, or catalog is bundled by this specification. You
 must implement the integration with your chosen audio source. This guide does
@@ -21,7 +22,10 @@ not provide an audio service or a working lossless provider.
 - [JavaScript entry point](#javascript-entry-point)
 - [Track search](#track-search)
 - [Stream resolution and lossless audio](#stream-resolution-and-lossless-audio)
+- [Playback error handling](#playback-error-handling)
+- [Lyrics, track details, and canvas](#lyrics-track-details-and-canvas)
 - [Host APIs and limits](#host-apis-and-limits)
+- [App attestation](#app-attestation)
 - [Package and install](#package-and-install)
 - [URLs, catalogs, and updates](#urls-catalogs-and-updates)
 - [Failures and diagnostics](#failures-and-diagnostics)
@@ -128,7 +132,7 @@ the credential setting when your service does not need one.
 | `module.author` | Optional string. |
 | `module.description` | Optional string, at most 8,192 characters. |
 | `module.labels` | Optional array of strings. Informational provider declarations, not verification of an active stream. `tags` is also accepted and merged with labels. |
-| `module.capabilities` | Required array of unique supported method names. Must include `searchTracks` and `getTrackStreamUrl` and exactly match the known methods actually exported by the script. |
+| `module.capabilities` | Required array of unique supported method names that exactly matches the known methods exported by the script. Declare `searchTracks` and `getTrackStreamUrl` together for audio. A module without them must declare at least one of `getLyrics`, `getTrackMetadata`, or `getCanvas`, and cannot declare `onPlaybackError`. |
 | `module.settings` | Optional object mapping setting keys to field declarations, or an array of declarations with unique string `key` values. |
 | `module.displayName` | Optional user-facing name, at most 256 characters. Used in installed rows, details, and installation review, the stable `id` is unchanged. Local name edits take precedence. |
 | `module.homepage` / `module.repository` | Optional absolute HTTP(S) project/source URLs, at most 2,048 characters. Displayed as links in review/details. |
@@ -143,7 +147,7 @@ the credential setting when your service does not need one.
 | `module.qualityLabel` | Optional label for the generated quality setting, defaults to the key `quality`. |
 
 Supported required feature IDs are `fetch@1`, `settings@1`, `streamResolution@1`,
-`packagedIcon@1`, and `qualityOptions@1`. These describe the host functionality
+`packagedIcon@1`, `qualityOptions@1`, `appAttestation@1`, and `songContext@1`. These describe the host functionality
 implemented by this build. publish the exact app build you verified, not just API v1.
 
 ### Optional icon
@@ -168,9 +172,14 @@ need conversion to `.arch`. See [Extension compatibility](#extension-compatibili
 for package, authentication, and transfer behavior.
 
 Supported capability names are `searchTracks`, `getTrackStreamUrl`, `getAlbum`,
-`getArtist`, and `getPlaylist`. Only the first two are called by automatic audio
-resolution. Optional album/artist/playlist capabilities are informational in the
-current application, declaring them does not create browsing UI.
+`getArtist`, `getPlaylist`, `onPlaybackError`, `getLyrics`, `getTrackMetadata`, and
+`getCanvas`. The first two are called by automatic audio resolution, and
+`onPlaybackError` is called when your stream fails during playback, see
+[Playback error handling](#playback-error-handling). The last three supply
+content for the song being played, see
+[Lyrics, track details, and canvas](#lyrics-track-details-and-canvas).
+Optional album/artist/playlist capabilities are informational in the current
+application, declaring them does not create browsing UI.
 
 Manifest identity, metadata, labels, and settings override corresponding script
 properties. Do not duplicate them in `module.exports`. Capability declarations
@@ -301,8 +310,9 @@ Signature: `searchTracks(query, limit, context)`.
 
 - `query` is a title/primary-artist query created from the existing song.
 - `limit` is currently `10`. Respect it, the host parses at most 100 results.
-- `context.settings` contains typed values. Track context is not supplied to
-  search in API v1.
+- `context.settings` contains typed values.
+- `context.song` describes the ArchiveTune song being resolved, see
+  [Song context](#song-context). Provider track context is not supplied to search.
 
 Return an array of track objects, or an object containing `tracks: [...]`. An
 empty array means the request succeeded and there were no results. Throw on
@@ -334,7 +344,43 @@ Signature: `getTrackStreamUrl(trackId, quality, context)`.
 `trackId` is the selected provider ID. `context.track` contains the selected
 provider candidate: `id`, `title`, `artist`, `artists`, and known album, duration,
 explicit, and ISRC fields. `context.metadata` and `context.item` are aliases of
-that same object. This is not a YouTube account or authentication context.
+that same object. `context.song` is the ArchiveTune song that this candidate was
+matched against, see [Song context](#song-context). Neither is a YouTube account
+or authentication context.
+
+### Song context
+
+Both `searchTracks` and `getTrackStreamUrl` receive `context.song`, the metadata
+ArchiveTune holds for the song being resolved. It is read-only and describes
+the song in the user's queue or library, not your provider's result. Every key is
+always present. Unknown values are `null`, never guessed or empty placeholders.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | ArchiveTune song ID. For online songs this is the YouTube Music video ID. |
+| `title` | Displayed song title. |
+| `artist` | Artist names joined with `, `. |
+| `artists` | Array of artist-name strings, in credit order. |
+| `artistDetails` | Array of `{name, id}` objects in the same order. `id` is the YouTube Music channel/browse ID, or `null`. |
+| `album` / `albumId` | Album title and YouTube Music album browse ID. |
+| `albumArtist` | Album artist credit when known. |
+| `duration` / `durationMs` | Running time in seconds and milliseconds. |
+| `explicit` | `true` when the source marks the song explicit, otherwise `null`. `false` is never asserted because the source does not reliably report it. |
+| `year` | Release year. |
+| `trackNumber` / `discNumber` | Position on the album. |
+| `thumbnailUrl` | Artwork URL as stored by ArchiveTune. |
+| `query` | The exact search string passed as `query`. |
+
+ISRC, lyrics, and personal library data such as likes, play counts, or download
+state are not included. ArchiveTune does not hold verified ISRCs for its songs.
+Use this context to build provider-specific lookups, such as an album search or
+duration filter. ArchiveTune's own matcher still decides which candidate is
+accepted. When a stream is refreshed after expiry, `context.song` is filled again
+from the library. It is `null` only when the song is no longer known there.
+
+Declare `songContext@1` in `requiredRuntimeFeatures` when your module cannot work
+without this object. Older builds then refuse installation instead of passing
+`undefined`.
 
 Return a JSON-serializable object describing an accessible audio resource:
 
@@ -382,6 +428,171 @@ through the committed enabled-provider order and then YouTube when resolution
 fails, a module cannot force the application's other providers to select a
 particular quality.
 
+## Playback error handling
+
+By default, an error while a module stream is playing is final: playback stops,
+or skips to the next song when **Auto skip to next song when error occurs** is on, and the error dialog
+names your module. Export and declare `onPlaybackError` to decide what happens
+instead. Older ArchiveTune builds reject the unknown capability during
+installation, so the handler is never silently ignored.
+
+Signature: `onPlaybackError(error, context)`. `context` has the same `settings`,
+`track`, and `song` fields as stream resolution. `error` describes the failure:
+
+| Field | Meaning |
+| --- | --- |
+| `trackId` | The provider track ID whose stream failed. |
+| `category` | `http`, `network`, `timeout`, `parsing`, `decoding`, `audio_output`, or `other`. |
+| `httpStatus` | Status of the failed media request when the server answered, otherwise `null`. |
+| `code` / `errorCode` | Media3 error name and number, for example `ERROR_CODE_IO_BAD_HTTP_STATUS` / `2004`. Diagnostic only, prefer `category` for decisions. |
+| `positionMs` / `durationMs` | Playback position at the failure, and the known duration or `null`. |
+| `attempt` | `1` for the first failure of this stream, higher after retries. |
+| `variant` / `mimeType` | The failing stream's declared variant and MIME type. |
+
+Return one of these actions, as an object `{action: "..."}` or as the bare string:
+
+| Action | Host behavior |
+| --- | --- |
+| `retry` | Calls `getTrackStreamUrl` again for the same track with `context.playbackError` set to the `error` object, then resumes at the failed position. Use it to refresh an expired or rejected URL, or to pick another mirror or quality. At most 2 retries per song and module. The budget resets once playback is running again or another song plays. Parsing and decoding retries also discard this stream's partially cached audio. |
+| `fallback` | Skips your module for this song for 10 minutes and resolves again through the next enabled module, then YouTube. Allowed once per song and module. |
+| `fail` | Stops with your explanation: `{action: "fail", message: "Your session expired. Sign in again in module settings."}`. The error dialog shows it beside your module name. Control characters are removed and the message is cut to 200 characters. Never include tokens or URLs. |
+| `default`, `null`, or nothing | Normal handling, as if no handler existed. |
+
+When a retry or fallback budget is used up, the host applies `default`. The
+handler has 10 seconds. A handler that throws, times out, or returns an unknown
+action is treated as `default`, and the module diagnostics record it. A retry
+whose `getTrackStreamUrl` call fails also ends in `default`. The handler is not
+called for completed offline downloads or for failures before your stream was
+selected. A thrown `getTrackStreamUrl` already moves on to the next provider.
+Each decision is recorded as the module's last playback outcome, for example
+`PLAYBACK/HTTP/403/RETRY`.
+
+```javascript
+async function onPlaybackError(error, context) {
+  if (error.category === 'http' && error.httpStatus === 403 && error.attempt === 1) return 'retry';
+  if (error.category === 'http' && error.httpStatus === 401) {
+    return {action: 'fail', message: 'Your account session expired. Open the module settings and sign in again.'};
+  }
+  if (error.category === 'decoding') return 'fallback';
+  return 'default';
+}
+```
+
+On the retry, `getTrackStreamUrl(trackId, quality, context)` sees
+`context.playbackError` and can choose a different source. Extension-runtime
+modules register `onPlaybackError(error, context)` with `registerExtension`, and
+receive the same object in `download`'s `options.playbackError`.
+
+## Lyrics, track details, and canvas
+
+A module can supply lyrics, track details, and canvas video in addition to audio,
+or instead of it. Export the method and declare it in `module.capabilities`. A
+module without `searchTracks` and `getTrackStreamUrl` is never asked for audio and
+is not listed among the consulted sources when playback fails. Older ArchiveTune
+builds reject the unknown capability names during installation.
+
+These methods run only while **Use modules** and your module are enabled. They
+receive `(song, context)`. `song` is the [song context](#song-context) object, and
+`context` carries the same `settings` and `song` fields as audio resolution. They
+can run for any song with a title and artist, including local files, so the song's
+title, artists, and album are sent to your service. When the user edits the title
+or artist in the lyrics search screen, `song.title`, `song.artists`, and
+`song.query` carry the edited values.
+
+Return `null` when you have nothing for the song. Throw on transport,
+authentication, or parsing failures. A network failure or timeout is treated as
+temporarily unavailable, not as a confirmed absence.
+
+### Lyrics
+
+Signature: `getLyrics(song, context)`. Return one object, or an array of up to 8
+alternatives:
+
+| Field | Meaning |
+| --- | --- |
+| `format` | Required. `ttml`, `lrc`, `syllable`, or `plain`. |
+| `lyrics` | Required text, at most 1 MiB of UTF-8. `text` is accepted as an alias. |
+| `author` | Optional credit for the lyrics, at most 256 characters. |
+| `sourceUrl` | Optional HTTP(S) page for the lyrics. |
+
+ArchiveTune checks that the text matches the declared format, and rejects the
+result with `LYRICS_FORMAT_MISMATCH` when it does not:
+
+- `ttml`: a TTML document with a root `<tt>` element in the
+  `http://www.w3.org/ns/ttml` namespace. Time lines with `begin` and `end` on `<p>`,
+  and words or syllables with `begin` and `end` on `<span>`.
+- `lrc`: line-synchronized LRC, one `[mm:ss.xx]` tag per line.
+- `syllable`: enhanced LRC. Each line has a `[mm:ss.xx]` tag, and each word or
+  syllable is preceded by a `<mm:ss.xx>` tag giving its start time.
+- `plain`: unsynchronized text without timestamps or markup.
+
+```text
+[00:12.00]<00:12.00>Hel<00:12.40>lo <00:12.80>world
+```
+
+```xml
+<tt xmlns="http://www.w3.org/ns/ttml">
+  <body><div>
+    <p begin="12.0s" end="14.0s"><span begin="12.0s" end="12.8s">Hello</span> <span begin="12.8s" end="14.0s">world</span></p>
+  </div></body>
+</tt>
+```
+
+Enabled lyrics modules are asked before the built-in lyrics providers, in module
+priority order, and each call is limited to 8 seconds. ArchiveTune keeps its usual
+selection: word-synchronized lyrics are preferred over line-synchronized lyrics,
+which are preferred over plain text, and earlier providers win ties. Lyrics are
+credited to your module's name, followed by `author` when supplied. Every returned
+alternative is offered when the user searches for other lyrics. Changing the
+module's configuration invalidates its cached results.
+
+### Track details
+
+Signature: `getTrackMetadata(song, context)`. Return an object with any of these
+fields. They are shown in the song's media information sheet, under **Details**,
+credited to your module. They do not change the library entry.
+
+| Field | Type |
+| --- | --- |
+| `title`, `album`, `albumArtist`, `label`, `copyright`, `key`, `language` | String |
+| `releaseDate` | String as you want it displayed, at most 64 characters |
+| `artists`, `genres`, `composers`, `lyricists`, `producers` | String or array of up to 32 strings |
+| `isrc`, `upc` | String, at most 32 characters |
+| `bpm` | Number greater than 0 and below 1000 |
+| `explicit` | Boolean |
+| `artworkUrl` | HTTPS URL |
+| `url` | HTTP(S) URL for the track on your service |
+| `description` | String, at most 8,192 characters |
+
+Strings are limited to 2,048 characters unless stated otherwise. Unknown fields
+are ignored and invalid types fail the call. Enabled modules are asked in priority
+order and the first non-empty result is shown. The call is limited to 15 seconds.
+
+### Canvas
+
+Signature: `getCanvas(song, context)`. Return a looping video for the player
+background:
+
+| Field | Meaning |
+| --- | --- |
+| `videoUrl` / `videoUrlVertical` | HTTPS progressive video, such as MP4. Downloaded into the canvas cache. |
+| `animated` / `animatedVertical` | HTTPS video or HLS playlist used when no progressive URL is given. |
+| `staticImage` | Optional HTTPS still image. |
+| `title` / `artist` | The track the canvas belongs to. Defaults to the requested song. |
+
+At least one video URL is required. The regular player uses `videoUrl` or
+`animated`, and the vertical full-screen player uses `videoUrlVertical` or
+`animatedVertical`, so a canvas without the matching orientation is skipped there.
+Canvas requests carry no custom headers or
+cookies, so URLs must be directly accessible. ArchiveTune rejects a canvas whose
+`title` and primary `artist` do not match the requested song. With the extension
+runtime, every URL must be allowed by `permissions.network`.
+
+Select **Modules**, or **All**, as the canvas source in canvas settings. **All**
+tries modules first. Canvas settings, Wi-Fi only, low-data mode, and cache limits
+apply to module canvases as they do to the built-in sources. Each module call is
+limited to 20 seconds.
+
 ## Host APIs and limits
 
 | API | Available behavior |
@@ -396,6 +607,7 @@ particular quality.
 | `setTimeout`, `clearTimeout` | One-shot timers, at most 128 active, delay bounded to 15 seconds. Timers are cleared after a method finishes. No interval API. |
 | `AbortController` | Request cancellation through the fetch `signal` option. No automatic context signal is supplied. |
 | `console` | log/info/warn/error/debug exist but do not publish logs. Use app diagnostics to investigate host failures. |
+| `appAttestation` | Hardware-backed proof that requests come from ArchiveTune. Requires the `appAttestation@1` feature, see [App attestation](#app-attestation). |
 
 Fetch does not throw solely because a server returns HTTP 4xx/5xx, check
 `response.ok` before parsing. Redirects are followed by the HTTP client, which
@@ -417,19 +629,163 @@ execution. Do not busy-loop, poll a download task, swallow abort errors, or keep
 background work after returning. Do not depend on the exact number of cached
 engines, it is an application implementation detail.
 
+## App attestation
+
+App attestation is optional. It lets your service accept requests only from a
+genuine ArchiveTune build and refuse forks, repackaged copies, scripts, and
+other apps that load your module. ArchiveTune does not decide who is refused.
+Your server verifies the evidence described here and applies its own policy.
+
+A module opts in by listing `appAttestation@1` in `module.requiredRuntimeFeatures`.
+For the extension runtime, list it in that manifest's `requiredRuntimeFeatures`.
+Builds without this feature reject the package during installation, so it cannot
+silently run without attestation. Without the declaration every
+`appAttestation` call fails with `ATTESTATION_NOT_DECLARED`. Installation review
+and module details show users an **App verification** notice.
+
+### What the proof establishes
+
+The evidence is an [Android Key Attestation](https://developer.android.com/privacy-and-security/security-key-attestation)
+certificate chain. Each module installation has its own EC P-256 signing key in the
+Android Keystore. The chain is signed by the device's secure hardware, and
+its attestation extension records the following:
+
+- `attestationApplicationId`: the package name and SHA-256 digests of the signing
+  certificates of the app that owns the key. The Android system supplies these
+  values, the app cannot choose them. A fork signed with another key, or an app
+  with another package name, produces different values.
+- `attestationChallenge`: the challenge derived below, binding the key to your nonce and module ID.
+- The security level (`TrustedEnvironment` or `StrongBox`) and root of trust,
+  including verified-boot state, plus the OS version and patch level.
+
+The private key never leaves the keystore and the module's JavaScript cannot
+read it. Other apps cannot use it, and neither can other modules in the same
+ArchiveTune install. Signed requests therefore come from this module running
+inside the attested app.
+
+### Flow
+
+1. Your server issues a single-use random nonce: 16–512 characters from
+   `A-Z a-z 0-9 . _ ~ + / = -`. Store it with a short expiry.
+2. The module calls `appAttestation.attest(nonce)`. This creates a fresh key for
+   the installation, replacing any previous one, and returns:
+
+   ```json
+   {
+     "format": "android-key-attestation",
+     "version": 1,
+     "moduleId": "org.example.my-provider",
+     "packageName": "moe.rukamori.archivetune",
+     "keyId": "base64url(SHA-256(leaf SubjectPublicKeyInfo DER))",
+     "certificateChain": ["base64 DER leaf", "...", "base64 DER root"]
+   }
+   ```
+
+   `packageName` is informational. Trust only the values inside the verified chain.
+3. The module sends this object to your server, which verifies it (see below) and
+   stores the leaf public key under `keyId`.
+4. The module sends protected requests with `appAttestation.fetch(url, options)`.
+   This has the same options and response as `fetch` (`appAttestation.fetch`
+   and `appAttestation.request` in the extension runtime, matching `fetch` and
+   `http.request`). The host signs the exact outgoing request with the attested key.
+
+Call `attest` only when your server reports that no valid key is registered.
+Each call rotates the key, and the old key can no longer sign. Key generation is
+done on the device and can take a moment. Inspection and top-level code cannot
+attest (`ATTESTATION_INSPECTION`). Removing the module deletes its key.
+
+### Challenge derivation
+
+The keystore challenge is not your raw nonce. It is:
+
+```text
+SHA-256(UTF-8("ARCHIVETUNE-MODULE-ATTESTATION-V1\n" + moduleId + "\n" + nonce))
+```
+
+`moduleId` is your manifest `module.id`. Recompute this value and compare it with
+`attestationChallenge` byte for byte. This prevents a key that was attested for
+another module, or for a nonce you did not issue, from being registered with your service.
+
+### Signed requests
+
+Attested requests must use HTTPS and do not follow redirects, 3xx responses
+are returned to the script. The host adds these headers, which replace any
+header of the same name set by the script:
+
+| Header | Value |
+| --- | --- |
+| `X-ArchiveTune-Attestation-Module` | `module.id` |
+| `X-ArchiveTune-Attestation-Key` | `keyId` from registration |
+| `X-ArchiveTune-Attestation-Timestamp` | Unix time in milliseconds |
+| `X-ArchiveTune-Attestation-Nonce` | 32 lowercase hexadecimal characters, unique per request |
+| `X-ArchiveTune-Attestation-Signature` | base64url, unpadded, DER ECDSA signature (`SHA256withECDSA`) |
+
+The signature covers these eight lines, joined by `\n` with no trailing newline:
+
+```text
+ARCHIVETUNE-MODULE-REQUEST-V1
+<module id>
+<HTTP method, uppercase>
+<scheme>://<host>[:<port>]      lowercase, port only when not the scheme default
+<encoded path>[?<encoded query>] exactly as sent
+<SHA-256 of the exact body bytes, lowercase hex, empty body for GET/HEAD>
+<timestamp>
+<nonce>
+```
+
+The script cannot add or alter these headers in a way that verifies, because it
+never holds the key.
+
+### Server verification
+
+Verify the chain on your server, never inside the module. The official
+[attestation verification library](https://github.com/android/keyattestation)
+handles chain validation, revocation, and expiry edge cases. At registration, reject the request unless:
+
+1. Every certificate signs the next, and the root is a Google hardware attestation
+   root from <https://android.googleapis.com/attestation/root>.
+2. No certificate serial appears in <https://android.googleapis.com/attestation/status>.
+3. `attestationSecurityLevel` is `TrustedEnvironment` or `StrongBox`.
+4. `attestationChallenge` equals the derived challenge for a nonce you issued,
+   that has not expired and has not been used before. Consume the nonce.
+5. `attestationApplicationId` contains package `moe.rukamori.archivetune` and the
+   SHA-256 digest of the official ArchiveTune release signing certificate you
+   accept. Debug builds use `moe.rukamori.archivetune.debug` and a debug key. Do
+   not accept them in production.
+6. Optionally, the root of trust reports a locked bootloader and `Verified` boot state, and the patch level meets your minimum.
+
+Read only the first attestation extension found from the root side of the chain,
+as described in the official guide.
+
+For each signed request, look up `keyId`, require the module header to match the
+registered module, and rebuild the canonical string from the request you received.
+Then verify the ECDSA signature with the registered public key. Reject
+timestamps outside a small window (for example ±5 minutes) and nonces already
+seen within it. Answer `401` and require a new registration when a key is
+unknown or revoked.
+
+### Limits
+
+Attestation proves which app holds the key, not what the user does with
+responses. Content you return can still be shared once it reaches the device.
+Devices without hardware-backed attestation, emulators, and devices that do not
+chain to the Google root cannot pass this check. Decide whether to refuse them
+or degrade service. A device whose hardware attestation key has leaked can forge
+evidence until Google revokes that key, so always check the status list. On
+failure the host throws an error with one of the diagnostic codes listed under
+[Failures and diagnostics](#failures-and-diagnostics).
+
 ## Package and install
 
 Python 3.9 or newer with its standard library is sufficient for the supplied
 packager. Cloning ArchiveTune is optional: download the standalone script with
 `curl` and run it against your own provider directory.
 
-### Without cloning ArchiveTune
-
 On Linux, macOS, or another POSIX shell:
 
 ```sh
 curl --fail --silent --show-error --location --output package_module.py \
-  https://raw.githubusercontent.com/rukamori/ArchiveTune/dev/scripts/package_module.py &&
+  https://raw.githubusercontent.com/rukamori/ArchiveTuneModules/main/scripts/package_module.py &&
 python3 package_module.py "./my-provider" "./my-provider.arch"
 ```
 
@@ -437,7 +793,7 @@ On Windows PowerShell, use `curl.exe` to select the curl executable rather than
 the Windows PowerShell alias:
 
 ```powershell
-curl.exe --fail --silent --show-error --location --output package_module.py "https://raw.githubusercontent.com/rukamori/ArchiveTune/dev/scripts/package_module.py"
+curl.exe --fail --silent --show-error --location --output package_module.py "https://raw.githubusercontent.com/rukamori/ArchiveTuneModules/main/scripts/package_module.py"
 if ($LASTEXITCODE -eq 0) {
     py -3 .\package_module.py ".\my-provider" ".\my-provider.arch"
 }
@@ -448,18 +804,6 @@ file. The commands save `package_module.py` in the current directory and run it
 only after curl succeeds. They download the packager, not a provider or the full
 ArchiveTune repository. On Windows, `python` can replace `py -3` when that is how
 Python 3.9 or newer is installed.
-
-The URL above follows the `dev` branch, where the packager is currently
-published. To use a fixed revision, replace `dev` in the URL with a commit SHA
-or tag that contains `scripts/package_module.py`.
-
-### From an existing checkout
-
-From the ArchiveTune repository root:
-
-```text
-python scripts/package_module.py path/to/my-provider path/to/my-provider.arch
-```
 
 ### Interactive terminal studio
 
@@ -614,6 +958,14 @@ The reader limits catalog depth to four, documents to 32, and entries to 1,000,
 it deduplicates repeated URLs to stop cycles. A direct JSON catalog URL is the
 most predictable publishing target.
 
+A GitHub repository URL is also accepted as a catalog URL, for example
+`https://github.com/rukamori/ArchiveTuneModules`. The reader looks for
+`registry.json`, `index.json`, `catalog.json`, then `source.json` at the root
+of the default branch through `raw.githubusercontent.com`. A `/tree/<ref>/<folder>`
+URL searches that branch and folder instead, and a `/blob/<ref>/<file>` URL reads
+that file directly. Relative download paths resolve against the raw file, and
+the GitHub URL is kept so refreshing follows the branch's latest catalog.
+
 For URL installations, Check for update revisits the original import URL. If
 the original URL is a descriptor, update that descriptor to point to the new
 package. Direct versioned package URLs keep pointing to that version unless
@@ -634,6 +986,9 @@ and redacted codes, arbitrary provider exception messages are not displayed.
 
 | Code / outcome | What to inspect |
 | --- | --- |
+| `INVALID_LYRICS_RESULT`, `INVALID_LYRICS_FORMAT`, `LYRICS_FORMAT_MISMATCH` | Return lyrics objects with a supported `format` and text that matches it. |
+| `INVALID_METADATA_RESULT`, `INVALID_CANVAS_RESULT`, `INVALID_CONTENT_FIELD`, `INVALID_CONTENT_URL` | Check field types, length limits, and that canvas and artwork URLs use HTTPS. |
+| `CONTENT_TIMEOUT` | Return lyrics within 8 seconds, track details within 15, and canvas within 20. |
 | `ARCH_ZIP`, `ARCH_ENTRY`, missing-file errors | ZIP format, compression, exact root filenames, duplicates, extra files, encryption, or damaged entries. |
 | `ARCH_SIZE` or invalid-document size errors | Compressed package, uncompressed entries, and normalized source limits. |
 | `ARCH_UTF8` | Encode both files as UTF-8. |
@@ -649,6 +1004,12 @@ and redacted codes, arbitrary provider exception messages are not displayed.
 | `EXT_NETWORK_PERMISSION` | Include the service, verification, and media domains in the extension's network declaration. Redirect destinations also need permission. |
 | `EXT_INITIALIZATION_IO` | Move network requests out of top-level registration and into initialization or a provider method. Import inspection performs no network I/O. |
 | `SESSION_VERIFICATION_REQUIRED` | Open installed module details and choose **Verify connection**. |
+| `ATTESTATION_NOT_DECLARED` | Add `appAttestation@1` to the manifest's required runtime features. |
+| `ATTESTATION_NONCE` | The nonce must be 16–512 characters from the documented alphabet. |
+| `ATTESTATION_REQUIRED` | No attested key exists for this installation. Call `appAttestation.attest` with a server nonce first. |
+| `ATTESTATION_HTTPS` | Attested requests are only sent over HTTPS. |
+| `ATTESTATION_UNAVAILABLE` | This device's keystore cannot create an attested key. |
+| `ATTESTATION_INSPECTION` | Attestation was used during installation inspection or top-level code. Move it into a provider method. |
 | `EXT_SESSION_SCHEME` | Declare the service's signing-protocol identifier in `signedSession.schemeLabel`. |
 | `SESSION_CALLBACK_STATE`, `SESSION_CALLBACK_EXPIRED` | Start verification again from that module's settings. A callback must match a pending, unexpired state. |
 | Provider TypeError during installation | Export an object and implement exactly the declared known capabilities. |
@@ -696,8 +1057,8 @@ and unknown required runtime features reject the staged import.
 An imported extension's `minAppVersion` refers to its originating host. It is retained as
 extension data, not compared numerically with ArchiveTune's version. Required
 runtime features determine host compatibility. This implementation recognizes
-`signedSession@3`, `sessionGrant@1`, `downloadSegments@1`, and
-`preparedContext@1`, `apiV3@1` is not implemented.
+`signedSession@3`, `sessionGrant@1`, `downloadSegments@1`,
+`preparedContext@1`, `appAttestation@1`, and `songContext@1`, `apiV3@1` is not implemented.
 
 ### Authoring a compatible `.arch`
 
@@ -720,8 +1081,10 @@ ArchiveTune even when the extension runtime is selected.
 | --- | --- |
 | `registerExtension(object)` | Exactly one registration with callable track-search and download methods is required. |
 | `initialize(settings)` | Receives flat, typed setting values. Initialization runs when that engine's configuration changes, a returned `false` fails the operation. |
-| `searchTracks(query, limit)` | Results are mapped from extension fields such as `name`, `artists`, `album_name`, and `duration_ms` before the existing recording matcher runs. |
-| `download(id, quality, outputPath, onProgress, options)` | Runs in transfer-resolution mode. The host captures the first file-transfer request and stops the extension's download pipeline there. No successful file download or local output path is fabricated. |
+| `searchTracks(query, limit, options)` | `options.song` is the [song context](#song-context). Results are mapped from extension fields such as `name`, `artists`, `album_name`, and `duration_ms` before the existing recording matcher runs. |
+| `onPlaybackError(error, context)` | Optional. Same contract as [Playback error handling](#playback-error-handling). `context.song` and `context.track` are supplied, settings arrive through `initialize`. |
+| `getLyrics`, `getTrackMetadata`, `getCanvas` `(song, options)` | Optional. Same results as [Lyrics, track details, and canvas](#lyrics-track-details-and-canvas). `options.song` is the song context, settings arrive through `initialize`. The extension runtime still requires its audio methods. |
+| `download(id, quality, outputPath, onProgress, options)` | `options.song` is the [song context](#song-context). `options.playbackError` is set when the host retries after `onPlaybackError` returned `retry`. Runs in transfer-resolution mode. The host captures the first file-transfer request and stops the extension's download pipeline there. No successful file download or local output path is fabricated. |
 | `http.get/head/delete(url, headers)` | Synchronous, cancellable HTTP with status, body, final URL, headers, and permission checks. Nested `headers`/`params` options are accepted for GET helpers. |
 | `http.post/put/patch(url, body, headers)` | String bodies are preserved, object bodies are JSON encoded. Content type defaults to JSON when a body is present. |
 | `http.request(url, options)` | Generic synchronous request with `method`, `headers`, and `body`. |
@@ -801,6 +1164,12 @@ target app/device before publishing compatibility claims.
 - Verify the actual returned encoding at every declared quality, a tag alone is
   not a quality check.
 - Check that changing YouTube quality does not change your module's request.
+- If you supply lyrics, check each declared format in the lyrics view, including
+  word timing for `ttml` and `syllable`.
+- If you use app attestation, confirm that your server rejects a debug build, a
+  build signed with another key, and a replayed nonce or request signature.
+- If you export `onPlaybackError`, check each action against a real failing
+  stream, and confirm that it returns `default` once your own recovery is exhausted.
 - Verify playback and applicable downloads against your real service.
 - Publish source, service requirements, supported qualities, version history,
   and the ArchiveTune build/API versions you actually checked. Do not claim

@@ -176,25 +176,21 @@ class BuildOnboardingUiStateUseCase
                         id = OnboardingPageId.WELCOME,
                         titleResId = R.string.onboarding_welcome_title,
                         subtitleResId = R.string.onboarding_welcome_subtitle,
-                        iconResId = R.drawable.app_icon_small,
                     ),
                     OnboardingPageUiModel(
                         id = OnboardingPageId.PERMISSIONS,
                         titleResId = R.string.onboarding_permissions_title,
                         subtitleResId = R.string.onboarding_permissions_subtitle,
-                        iconResId = R.drawable.security,
                     ),
                     OnboardingPageUiModel(
                         id = OnboardingPageId.LOGIN,
                         titleResId = R.string.onboarding_login_title,
                         subtitleResId = R.string.onboarding_login_subtitle,
-                        iconResId = R.drawable.login,
                     ),
                     OnboardingPageUiModel(
                         id = OnboardingPageId.COMMUNITY,
                         titleResId = R.string.onboarding_community_title,
                         subtitleResId = R.string.onboarding_community_subtitle,
-                        iconResId = R.drawable.star,
                     ),
                 )
 

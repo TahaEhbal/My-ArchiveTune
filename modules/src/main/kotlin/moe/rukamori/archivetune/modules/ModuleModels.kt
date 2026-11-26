@@ -20,6 +20,17 @@ enum class ModuleLoadStage { DOWNLOAD, DECODE, ENGINE, HOST, PROVIDER, MANIFEST,
 class ModuleException(val failure: ModuleFailure, cause: Throwable? = null, val stage: ModuleLoadStage? = null,
     val diagnosticCode: String? = null) : Exception(failure.name, cause)
 
+object ModuleCapabilities {
+    const val SEARCH = "searchTracks"
+    const val STREAM = "getTrackStreamUrl"
+    const val PLAYBACK_ERROR = "onPlaybackError"
+    const val LYRICS = "getLyrics"
+    const val METADATA = "getTrackMetadata"
+    const val CANVAS = "getCanvas"
+    val known = listOf(SEARCH, STREAM, "getAlbum", "getArtist", "getPlaylist", PLAYBACK_ERROR, LYRICS, METADATA, CANVAS)
+    val content = listOf(LYRICS, METADATA, CANVAS)
+}
+
 enum class ModuleSettingType { TEXT, PASSWORD, NUMBER, BOOLEAN, SELECT, UNSUPPORTED }
 
 data class ModuleOption(val label: String, val valueJson: String, val description: String = "", val kind: String = "")
@@ -56,7 +67,12 @@ data class ModuleManifest(
     val requiredRuntimeFeatures: List<String> = emptyList(),
     val icon: ByteString? = null,
     val authentication: Boolean = false,
+    val appAttestation: Boolean = false,
 ) {
+    val providesAudio: Boolean get() = capabilities.containsAll(listOf(ModuleCapabilities.SEARCH, ModuleCapabilities.STREAM))
+
+    fun provides(capability: String): Boolean = capability in capabilities
+
     companion object {
         fun parse(value: JSONObject): ModuleManifest {
             val schema = value.optJSONObject("settings") ?: JSONObject()
@@ -90,16 +106,21 @@ data class ModuleManifest(
                     rawType == "integer",
                 )
             }.toList()
+            val requiredFeatures = stringList(value, "requiredRuntimeFeatures")
             return ModuleManifest(
                 value.optString("id"), value.optString("name"), value.optString("version"),
                 value.optString("author"), value.optString("description"),
                 (value.optJSONArray("labels").strings() + value.optJSONArray("tags").strings()).distinct(), fields, value.optJSONArray("capabilities").strings(),
                 value.optString("displayName"), projectUrl(value, "homepage"), projectUrl(value, "repository"), value.optString("license"),
-                stringList(value, "type"), value.optString("minAppVersion"), stringList(value, "requiredRuntimeFeatures"),
+                stringList(value, "type"), value.optString("minAppVersion"), requiredFeatures,
                 value.optString("iconBase64").takeIf(String::isNotBlank)?.let(::moduleIcon),
                 value.optBoolean("authentication"),
+                value.optBoolean("appAttestation") || ModuleAppAttestation.FEATURE in requiredFeatures,
             ).also {
-                if (it.id.isBlank() || it.name.isBlank() || !it.capabilities.containsAll(listOf("searchTracks", "getTrackStreamUrl"))) {
+                val audio = it.capabilities.count { capability -> capability == ModuleCapabilities.SEARCH || capability == ModuleCapabilities.STREAM }
+                if (it.id.isBlank() || it.name.isBlank() || audio == 1 ||
+                    (audio == 0 && (it.capabilities.none { capability -> capability in ModuleCapabilities.content } ||
+                        ModuleCapabilities.PLAYBACK_ERROR in it.capabilities))) {
                     throw ModuleException(ModuleFailure.UNSUPPORTED)
                 }
                 if (it.id.length > 256 || it.name.length > 256 || it.version.length > 128 || it.description.length > 8192) throw ModuleException(ModuleFailure.INVALID_DOCUMENT)
@@ -138,7 +159,7 @@ fun moduleIcon(encoded: String): ByteString {
 }
 
 fun ModuleManifest.requireCompatible(appVersion: String) {
-    val features = setOf("fetch@1", "settings@1", "streamResolution@1", "packagedIcon@1", "qualityOptions@1")
+    val features = setOf("fetch@1", "settings@1", "streamResolution@1", "packagedIcon@1", "qualityOptions@1", ModuleAppAttestation.FEATURE, ModuleSong.FEATURE)
     if (requiredRuntimeFeatures.any { it !in features }) throw ModuleException(ModuleFailure.UNSUPPORTED,
         stage = ModuleLoadStage.MANIFEST, diagnosticCode = "ARCH_RUNTIME_FEATURE")
     if (minAppVersion.isBlank()) return
@@ -158,6 +179,123 @@ data class ModuleTrack(
     val explicit: Boolean?,
     val identifier: String?,
 )
+
+enum class ModuleLyricsFormat(val id: String) {
+    TTML("ttml"), LRC("lrc"), SYLLABLE("syllable"), PLAIN("plain");
+
+    companion object {
+        fun of(value: String): ModuleLyricsFormat? = entries.firstOrNull { it.id == value }
+    }
+}
+
+data class ModuleLyrics(
+    val format: ModuleLyricsFormat,
+    val text: String,
+    val author: String?,
+    val sourceUrl: String?,
+)
+
+data class ModuleTrackDetails(
+    val title: String?,
+    val artists: List<String>,
+    val album: String?,
+    val albumArtist: String?,
+    val releaseDate: String?,
+    val genres: List<String>,
+    val label: String?,
+    val isrc: String?,
+    val upc: String?,
+    val composers: List<String>,
+    val lyricists: List<String>,
+    val producers: List<String>,
+    val copyright: String?,
+    val bpm: Double?,
+    val key: String?,
+    val language: String?,
+    val explicit: Boolean?,
+    val artworkUrl: String?,
+    val url: String?,
+    val description: String?,
+) {
+    val isEmpty: Boolean get() = listOf(title, album, albumArtist, releaseDate, label, isrc, upc, copyright, key, language, artworkUrl, url, description)
+        .all { it == null } && artists.isEmpty() && genres.isEmpty() && composers.isEmpty() && lyricists.isEmpty() &&
+        producers.isEmpty() && bpm == null && explicit == null
+}
+
+data class ModuleCanvas(
+    val title: String?,
+    val artist: String?,
+    val videoUrl: String?,
+    val videoUrlVertical: String?,
+    val animated: String?,
+    val animatedVertical: String?,
+    val staticImage: String?,
+)
+
+data class ModuleSongArtist(val name: String, val id: String?)
+
+data class ModuleSong(
+    val id: String,
+    val title: String,
+    val artists: List<ModuleSongArtist>,
+    val album: String?,
+    val albumId: String?,
+    val albumArtist: String?,
+    val durationSeconds: Int?,
+    val explicit: Boolean?,
+    val year: Int?,
+    val trackNumber: Int?,
+    val discNumber: Int?,
+    val thumbnailUrl: String?,
+    val query: String,
+) {
+    fun json(): JSONObject = JSONObject()
+        .put("id", id)
+        .put("title", title)
+        .put("artist", artists.joinToString(", ") { it.name })
+        .put("artists", JSONArray(artists.map { it.name }))
+        .put("artistDetails", JSONArray(artists.map { JSONObject().put("name", it.name).put("id", it.id ?: JSONObject.NULL) }))
+        .put("album", album ?: JSONObject.NULL)
+        .put("albumId", albumId ?: JSONObject.NULL)
+        .put("albumArtist", albumArtist ?: JSONObject.NULL)
+        .put("duration", durationSeconds ?: JSONObject.NULL)
+        .put("durationMs", durationSeconds?.let { it * 1000L } ?: JSONObject.NULL)
+        .put("explicit", explicit ?: JSONObject.NULL)
+        .put("year", year ?: JSONObject.NULL)
+        .put("trackNumber", trackNumber ?: JSONObject.NULL)
+        .put("discNumber", discNumber ?: JSONObject.NULL)
+        .put("thumbnailUrl", thumbnailUrl ?: JSONObject.NULL)
+        .put("query", query)
+
+    companion object {
+        const val FEATURE = "songContext@1"
+    }
+}
+
+sealed interface ModulePlaybackDecision {
+    data object Retry : ModulePlaybackDecision
+    data object Fallback : ModulePlaybackDecision
+    data class Fail(val message: String?) : ModulePlaybackDecision
+    data object Default : ModulePlaybackDecision
+}
+
+data class ModulePlaybackFailure(
+    val category: String,
+    val errorCode: Int,
+    val errorCodeName: String,
+    val httpStatus: Int?,
+    val positionMs: Long,
+    val durationMs: Long?,
+    val attempt: Int,
+    val variant: String,
+    val mimeType: String,
+) {
+    fun json(trackId: String): org.json.JSONObject = org.json.JSONObject()
+        .put("trackId", trackId).put("category", category).put("code", errorCodeName).put("errorCode", errorCode)
+        .put("httpStatus", httpStatus ?: org.json.JSONObject.NULL).put("positionMs", positionMs)
+        .put("durationMs", durationMs ?: org.json.JSONObject.NULL).put("attempt", attempt)
+        .put("variant", variant).put("mimeType", mimeType)
+}
 
 data class ModuleStream(
     val url: String,

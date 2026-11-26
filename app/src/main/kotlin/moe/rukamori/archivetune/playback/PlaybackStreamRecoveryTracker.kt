@@ -24,7 +24,8 @@ internal class PlaybackStreamRecoveryTracker {
     }
 
     fun onPlaybackRecovered(mediaId: String?) {
-        if (mediaId != null && attemptedMediaId == mediaId) {
+        if (mediaId == null) return
+        if (attemptedMediaId == mediaId) {
             attemptedMediaId = null
             attempts = 0
         }

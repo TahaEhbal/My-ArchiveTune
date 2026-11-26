@@ -35,7 +35,7 @@ globalThis.__moduleCreateExtension = function(metadata, load) {
       Object.values(value).forEach(child => { if (child && typeof child === 'object') pending.push([child, depth+1]); });
     }
   }
-  function request(method, url, body, headers) {
+  function request(method, url, body, headers, attest = false) {
     active();
     const options=headers || {};
     if (options.params) {
@@ -47,7 +47,7 @@ globalThis.__moduleCreateExtension = function(metadata, load) {
     if (options.params) delete headers.params;
     if (body != null && typeof body !== 'string') body=JSON.stringify(body);
     if (body != null && !Object.keys(headers).some(key=>key.toLowerCase()==='content-type')) headers['Content-Type']='application/json';
-    const response = native({action:'request', method, url:String(url), body:body ?? null, headers});
+    const response = native({action:'request', method, url:String(url), body:body ?? null, headers, attest});
     remember(response.body, response.url);
     return response;
   }
@@ -58,12 +58,18 @@ globalThis.__moduleCreateExtension = function(metadata, load) {
     request:(url,options={})=>request(options.method || 'GET',url,options.body,options.headers),
     clearCookies:()=>native({action:'clearCookies'})
   });
-  function fetch(url, options={}) {
-    const response=http.request(String(url),options);
+  function fetchResponse(response) {
     return Object.freeze({ok:response.ok,status:response.status,statusText:response.statusText,url:response.url,headers:new Headers(response.headers),
       text:()=>response.body,json:()=>JSON.parse(response.body),arrayBuffer:()=>Uint8Array.from(atob(response.base64),c=>c.charCodeAt(0)).buffer});
   }
+  function fetch(url, options={}) { return fetchResponse(http.request(String(url),options)); }
   globalThis.fetch=fetch;
+  const attestedRequest=(url,options={})=>request(options.method || 'GET',String(url),options.body,options.headers,true);
+  globalThis.appAttestation = Object.freeze({
+    attest:nonce=>{active();return native({action:'attest',nonce:String(nonce)});},
+    request:attestedRequest,
+    fetch:(url,options={})=>fetchResponse(attestedRequest(url,options))
+  });
   const storage = Object.freeze({
     get:key=>{active();return native({action:'storageGet',key:String(key)});},
     set:(key,value)=>{active();return native({action:'storageSet',key:String(key),value});},
@@ -174,7 +180,7 @@ globalThis.__moduleCreateExtension = function(metadata, load) {
   const provider={...metadata,authentication:!!metadata.signedSession,
     async searchTracks(query,limit,context) {
       await start(context);
-      const result=await registered.searchTracks(query,limit);
+      const result=await registered.searchTracks(query,limit,{song:context?.song ?? null});
       const values=Array.isArray(result)?result:result?.tracks;
       if (!Array.isArray(values)) throw new TypeError('Invalid extension search result');
       prepared.clear();
@@ -186,7 +192,7 @@ globalThis.__moduleCreateExtension = function(metadata, load) {
       await start(context);
       let outcome;
       try {
-        outcome=await registered.download(id,quality,'/resolved/audio',()=>{}, {duration_ms:(context?.track?.duration || 0)*1000,preparedContext:prepared.get(String(id))});
+        outcome=await registered.download(id,quality,'/resolved/audio',()=>{}, {duration_ms:(context?.track?.duration || 0)*1000,preparedContext:prepared.get(String(id)),song:context?.song ?? null,playbackError:context?.playbackError ?? null});
       } catch(error) { if (!transfer) throw error; }
       if (!transfer) {
         const error=new Error('Extension did not resolve a playable transfer');
@@ -207,8 +213,18 @@ globalThis.__moduleCreateExtension = function(metadata, load) {
     }
   };
   ['getAlbum','getArtist','getPlaylist'].forEach(key=>{if(typeof registered[key]==='function')provider[key]=registered[key].bind(registered);});
+  if (typeof registered.onPlaybackError==='function') provider.onPlaybackError=async (error,context)=>{
+    await start(context);
+    return registered.onPlaybackError(error,{song:context?.song ?? null,track:context?.track ?? null});
+  };
+  ['getLyrics','getTrackMetadata','getCanvas'].forEach(key=>{
+    if (typeof registered[key]==='function') provider[key]=async (song,context)=>{
+      await start(context);
+      return registered[key](song,{song:context?.song ?? song ?? null});
+    };
+  });
   if (metadata.declaredCapabilities) {
-    const known=['searchTracks','getTrackStreamUrl','getAlbum','getArtist','getPlaylist'];
+    const known=['searchTracks','getTrackStreamUrl','getAlbum','getArtist','getPlaylist','onPlaybackError','getLyrics','getTrackMetadata','getCanvas'];
     const actual=known.filter(key=>typeof provider[key]==='function');
     if (actual.length!==metadata.declaredCapabilities.length || actual.some(key=>!metadata.declaredCapabilities.includes(key))) throw new TypeError('Extension capability mismatch');
   }

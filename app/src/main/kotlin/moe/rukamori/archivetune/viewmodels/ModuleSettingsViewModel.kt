@@ -40,7 +40,7 @@ sealed interface ModuleSettingsState {
 }
 
 enum class ModuleSettingsPage { HOME, MODULE, CATALOG }
-enum class ModuleSettingsDialog { ADD, MODULE_URL, CATALOG_URL, REVIEW, REMOVE_MODULE, REMOVE_CATALOG, DISCARD, DIAGNOSTICS, EDIT_METADATA, DISCARD_METADATA }
+enum class ModuleSettingsDialog { MODULE_URL, CATALOG_URL, REVIEW, REMOVE_MODULE, REMOVE_CATALOG, DISCARD, DIAGNOSTICS, EDIT_METADATA, DISCARD_METADATA }
 
 enum class ModuleMetadataField { NAME, AUTHOR, DESCRIPTION }
 
@@ -67,7 +67,7 @@ data class ModuleOperationFailureUi(@param:StringRes val stage: Int, val code: S
 data class ModuleOptionUi(val label: String, val json: String, val description: String)
 
 @Immutable
-data class ModuleInfoUi(@param:StringRes val label: Int, val value: String, val link: Boolean = false)
+data class ModuleInfoUi(@param:StringRes val label: Int, val value: String, val link: Boolean = false, @param:StringRes val valueRes: Int? = null)
 
 @Immutable
 data class ModuleFieldUi(val key: String, val label: String, val description: String, val type: ModuleSettingType,
@@ -109,7 +109,6 @@ sealed interface ModuleSettingsAction {
     data object Retry : ModuleSettingsAction
     data class Tab(val index: Int) : ModuleSettingsAction
     data object Back : ModuleSettingsAction
-    data object Add : ModuleSettingsAction
     data object File : ModuleSettingsAction
     data class FileSelected(val uri: Uri) : ModuleSettingsAction
     data class Url(val catalog: Boolean, val editId: String? = null) : ModuleSettingsAction
@@ -205,7 +204,6 @@ class ModuleSettingsViewModel @Inject constructor(private val useCases: ModuleSe
             ModuleSettingsAction.Retry -> observe()
             is ModuleSettingsAction.Tab -> { tab = action.index; render() }
             ModuleSettingsAction.Back -> back()
-            ModuleSettingsAction.Add -> { dialog = ModuleSettingsDialog.ADD; render() }
             ModuleSettingsAction.File -> { dialog = null; eventChannel.trySend(ModuleSettingsEvent.PickFile); render() }
             is ModuleSettingsAction.Url -> {
                 dialog = if (action.catalog) ModuleSettingsDialog.CATALOG_URL else ModuleSettingsDialog.MODULE_URL
@@ -401,8 +399,8 @@ class ModuleSettingsViewModel @Inject constructor(private val useCases: ModuleSe
         val modules = draftOrder?.mapNotNull { id -> registry.modules.firstOrNull { it.id == id } } ?: registry.modules
         val rows = modules.mapIndexed { index, module ->
             val result = currentHealth(module)
-            ModuleRowUi(module.id, module.metadata?.name ?: module.manifest.displayName.ifBlank { module.manifest.name },
-                listOf(module.metadata?.author ?: module.manifest.author, module.manifest.version).filter(String::isNotBlank).joinToString(" \u00b7 "),
+            ModuleRowUi(module.id, module.displayLabel,
+                listOf(module.displayAuthor, module.manifest.version).filter(String::isNotBlank).joinToString(" \u00b7 "),
                 module.enabled, index + 1, if (busy == module.id) R.string.modules_checking else statusResource((result.playback ?: result.check)?.status),
                 module.updateUrl.isNotBlank(), busy != module.id && result.playback != null,
                 qualityTags(module.manifest.labels, module.manifest.settings), capabilities(module.manifest.capabilities), module.manifest.icon)
@@ -468,6 +466,7 @@ class ModuleSettingsViewModel @Inject constructor(private val useCases: ModuleSe
         if (manifest.repository.isNotBlank()) add(ModuleInfoUi(R.string.modules_metadata_repository, manifest.repository, true))
         if (manifest.minAppVersion.isNotBlank()) add(ModuleInfoUi(R.string.modules_metadata_min_app, manifest.minAppVersion))
         if (manifest.requiredRuntimeFeatures.isNotEmpty()) add(ModuleInfoUi(R.string.modules_metadata_runtime, manifest.requiredRuntimeFeatures.joinToString()))
+        if (manifest.appAttestation) add(ModuleInfoUi(R.string.modules_metadata_app_attestation, "", valueRes = R.string.modules_app_attestation_description))
     })
 
     private fun qualityTags(labels: List<String>, settings: List<ModuleSetting>): ImmutableList<Int> =
@@ -501,9 +500,7 @@ class ModuleSettingsViewModel @Inject constructor(private val useCases: ModuleSe
         }, value.candidateCount.takeIf { value.phase != null && value.phase != ModuleResolutionPhase.SEARCH },
         diagnosticLabel(value.upstream), diagnosticLabel(value.variant), value.code)
 
-    private fun diagnosticLabel(value: String): String = value.takeIf {
-        it.length <= 96 && it.matches(Regex("[\\p{L}\\p{N} _().+/-]*"))
-    }.orEmpty()
+    private fun diagnosticLabel(value: String): String = moduleDiagnosticLabel(value)
 
     private fun copyDiagnostics() {
         val entries = registry.modules.filter { selectedId == null || it.id == selectedId }
@@ -541,6 +538,10 @@ class ModuleSettingsViewModel @Inject constructor(private val useCases: ModuleSe
                 "getAlbum" -> R.string.modules_capability_album
                 "getArtist" -> R.string.modules_capability_artist
                 "getPlaylist" -> R.string.modules_capability_playlist
+                "onPlaybackError" -> R.string.modules_capability_playback_errors
+                "getLyrics" -> R.string.modules_capability_lyrics
+                "getTrackMetadata" -> R.string.modules_capability_metadata
+                "getCanvas" -> R.string.modules_capability_canvas
                 else -> null
             }
         })
